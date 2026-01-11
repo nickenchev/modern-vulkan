@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <array>
+#include <string>
 
 struct SDL_Window;
 struct VmaAllocator_T;
@@ -64,4 +65,6 @@ private:
 	bool createDevice(VkPhysicalDevice physicalDevice);
 	bool initializeVMA();
 	VkSwapchainKHR createSwapchain(uint32_t width, uint32_t height);
+
+	std::string readTextFile(const std::string &filePath) const;
 };

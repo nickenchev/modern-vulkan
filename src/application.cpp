@@ -5,9 +5,29 @@
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
 
+#include <shaderc/shaderc.hpp>
+#include <iostream>
+
 void Application::showError(const std::string &errorMessasge) const
 {
 	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessasge.c_str(), window);
+}
+
+std::vector<uint32_t> compileShader(const std::string source, shaderc_shader_kind kind, const std::string &fileName)
+{
+	shaderc::Compiler compiler;
+	shaderc::CompileOptions opts;
+
+	opts.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_4);
+	opts.SetTargetSpirv(shaderc_spirv_version_1_6);
+	opts.SetOptimizationLevel(shaderc_optimization_level_performance);
+
+	shaderc::CompilationResult result = compiler.CompileGlslToSpv(source, kind, fileName.c_str(), opts);
+	if (result.GetCompilationStatus() != shaderc_compilation_status_success)
+	{
+		std::cerr << "Shader Compilation Error: " << result.GetErrorMessage() << std::endl;
+	}
+	return { result.cbegin(), result.cend() };
 }
 
 bool Application::initialize()
@@ -473,3 +493,4 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 
 	return swapchain;
 }
+
