@@ -20,6 +20,8 @@ class Application
 	constexpr static uint32_t MaxFramesInFlight{ 2 };
 
 	SDL_Window* window = nullptr;
+	int width = 1280;
+	int height = 720;
 	bool running = false;
 
 	// vulkan core

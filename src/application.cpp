@@ -5,7 +5,7 @@
 #define VMA_IMPLEMENTATION
 #include <vma/vk_mem_alloc.h>
 
-void Application::showError(const std::string& errorMessasge) const
+void Application::showError(const std::string &errorMessasge) const
 {
 	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessasge.c_str(), window);
 }
@@ -13,7 +13,7 @@ void Application::showError(const std::string& errorMessasge) const
 bool Application::initialize()
 {
 	SDL_InitSubSystem(SDL_INIT_VIDEO);
-	window = SDL_CreateWindow("Vulkan Learning", 1280, 720, SDL_WINDOW_VULKAN);
+	window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN);
 	if (!window)
 	{
 		showError("Error creating window");
@@ -30,10 +30,28 @@ bool Application::initialize()
 
 void Application::shutdown()
 {
+	// cleanup allocated resources
+	vkDestroyImageView(device, depthImageView, nullptr);
+	vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
+
+	// cleanup swapchain
+	for (VkImageView swapchainImgView : swapchainImageViews)
+	{
+		vkDestroyImageView(device, swapchainImgView, nullptr);
+	}
+	swapchainImageViews.clear();
+
+	if (swapchain)
+	{
+		vkDestroySwapchainKHR(device, swapchain, nullptr);
+	}
+
+	// VMA
 	if (vmaAllocator)
 	{
 		vmaDestroyAllocator(vmaAllocator);
 	}
+
 	// cleanup Vulkan
 	if (surface)
 	{
@@ -105,6 +123,12 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
+	if (swapchain = createSwapchain(width, height); !swapchain)
+	{
+		showError("Unable to create swapchain");
+		return false;
+	}
+
 	return true;
 }
 
@@ -126,9 +150,9 @@ VkInstance Application::createVulkanInstance() const
 	};
 
 	uint32_t instExtCount = 0;
-	const char* const* extensions = SDL_Vulkan_GetInstanceExtensions(&instExtCount);
+	const char *const *extensions = SDL_Vulkan_GetInstanceExtensions(&instExtCount);
 
-	std::vector<const char*> requestedLayers
+	std::vector<const char *> requestedLayers
 	{
 		"VK_LAYER_KHRONOS_validation"
 	};
@@ -169,7 +193,7 @@ VkPhysicalDevice Application::findPhysicalDevice()
 	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, physicalDevices.data());
 
 	// find an appropriate physical device (GPU)
-	for (auto& pd : physicalDevices)
+	for (auto &pd : physicalDevices)
 	{
 		bool hasGfxQueue = false;
 		bool hasPresentQueue = false;
@@ -181,7 +205,7 @@ VkPhysicalDevice Application::findPhysicalDevice()
 		vkEnumerateDeviceExtensionProperties(pd, nullptr, &extCount, availableExtensions.data());
 
 		bool hasSwapchainSupport = false;
-		for (const auto& ext : availableExtensions)
+		for (const auto &ext : availableExtensions)
 		{
 			if (strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
 			{
@@ -200,7 +224,7 @@ VkPhysicalDevice Application::findPhysicalDevice()
 
 			for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size(); currentFamIdx++)
 			{
-				const auto& props = queueFamProps[currentFamIdx];
+				const auto &props = queueFamProps[currentFamIdx];
 				if (props.queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
 				{
 					gfxQueueFamIdx = currentFamIdx;
@@ -278,7 +302,7 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 	// query all features / will enable all
 	vkGetPhysicalDeviceFeatures2(physicalDevice, &features);
 
-	const std::vector<const char*> deviceExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+	const std::vector<const char *> deviceExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 	VkDeviceCreateInfo devCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -358,7 +382,7 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 		.minImageCount = surfaceCaps.minImageCount,
 		.imageFormat = imageFormat,
 		.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
-		.imageExtent{ .width = width, .height = height },
+		.imageExtent{.width = width, .height = height },
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 		.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
@@ -380,9 +404,33 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 	vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
 	swapchainImageViews.resize(imageCount);
 
+	// create the swapchain image views
+	for (int i = 0; i < imageCount; ++i)
+	{
+		VkImageViewCreateInfo imgViewInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = swapchainImages[i],
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = imageFormat,
+			.subresourceRange
+			{
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.levelCount = 1,
+				.layerCount = 1
+			}
+		};
+
+		if (vkCreateImageView(device, &imgViewInfo, nullptr, &swapchainImageViews[i]) != VK_SUCCESS)
+		{
+			showError("Error creating swapchain image view");
+			return nullptr;
+		}
+	}
+
 
 	// create depth image
-	const VkFormat depthFormat{ VK_FORMAT_D24_UNORM_S8_UINT };
+	const VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT_S8_UINT };
 	VkImageCreateInfo depthCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
