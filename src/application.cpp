@@ -7,6 +7,8 @@
 
 #include <shaderc/shaderc.hpp>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -16,8 +18,8 @@ void Application::showError(const std::string &errorMessasge) const
 std::vector<uint32_t> compileShader(const std::string source, shaderc_shader_kind kind, const std::string &fileName)
 {
 	shaderc::Compiler compiler;
-	shaderc::CompileOptions opts;
 
+	shaderc::CompileOptions opts;
 	opts.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_4);
 	opts.SetTargetSpirv(shaderc_spirv_version_1_6);
 	opts.SetOptimizationLevel(shaderc_optimization_level_performance);
@@ -148,6 +150,8 @@ bool Application::initializeVulkan()
 		showError("Unable to create swapchain");
 		return false;
 	}
+
+	compileShaders();
 
 	return true;
 }
@@ -492,5 +496,25 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 	}
 
 	return swapchain;
+}
+
+void Application::compileShaders()
+{
+	const std::string srcVert = readTextFile("src/shaders/shader.vert");
+	std::vector<uint32_t> spvVert = compileShader(srcVert, shaderc_vertex_shader, "shader.vert");
+}
+
+std::string Application::readTextFile(const std::string &filePath) const
+{
+	std::ifstream infile(filePath);
+	if (infile.is_open())
+	{
+		std::stringstream buffer;
+		buffer << infile.rdbuf();
+		const std::string output = buffer.str();
+		infile.close();
+		return output;
+	}
+	return std::string();
 }
 

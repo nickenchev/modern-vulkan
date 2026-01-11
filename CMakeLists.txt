@@ -10,7 +10,7 @@ add_executable(vulkanapp
 	"src/application.h"
 	"src/application.cpp"
 	"src/shaderdata.h"
-	"src/shaders/shaders.h")
+	)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

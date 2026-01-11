@@ -65,6 +65,7 @@ private:
 	bool createDevice(VkPhysicalDevice physicalDevice);
 	bool initializeVMA();
 	VkSwapchainKHR createSwapchain(uint32_t width, uint32_t height);
+	void compileShaders();
 
 	std::string readTextFile(const std::string &filePath) const;
 };
