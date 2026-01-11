@@ -4,8 +4,10 @@
 int main(int argc, char *argv[])
 {
 	Application app;
-	app.initialize();
-	app.start();
+	if (app.initialize())
+	{
+		app.start();
+	}
 	app.shutdown();
 
 	return 0;
