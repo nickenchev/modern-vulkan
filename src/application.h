@@ -8,6 +8,7 @@
 #include <vector>
 #include <array>
 #include <string>
+#include <shaderc/shaderc.hpp>
 
 struct SDL_Window;
 struct VmaAllocator_T;
@@ -15,10 +16,18 @@ typedef struct VmaAllocator_T* VmaAllocator;
 struct VmaAllocation_T;
 typedef struct VmaAllocation_T* VmaAllocation;
 
+struct Pipeline
+{
+	VkPipelineLayout layout = nullptr;
+	VkPipeline handle = nullptr;
+};
+
 class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
 	constexpr static uint32_t MaxFramesInFlight{ 2 };
+	constexpr static VkFormat swapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
+	constexpr static VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT_S8_UINT };
 
 	SDL_Window* window = nullptr;
 	int width = 1280;
@@ -47,6 +56,13 @@ class Application
 	VkImageView depthImageView = nullptr;
 	VmaAllocation depthImageAllocation = nullptr;
 
+	// graphics pipeline related
+	Pipeline pipeline;
+
+	// shader resources
+	VkShaderModule vertShader = nullptr;
+	VkShaderModule fragShader = nullptr;
+
 	//per frame resources
 
 
@@ -65,7 +81,8 @@ private:
 	bool createDevice(VkPhysicalDevice physicalDevice);
 	bool initializeVMA();
 	VkSwapchainKHR createSwapchain(uint32_t width, uint32_t height);
-	void compileShaders();
-
 	std::string readTextFile(const std::string &filePath) const;
+	VkShaderModule createShaderModule(const std::string &fileName, shaderc_shader_kind kind) const;
+	bool createShaders();
+	Pipeline createGraphicsPipeline() const;
 };
