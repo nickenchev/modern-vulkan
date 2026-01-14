@@ -9,7 +9,6 @@ add_executable(vulkanapp
 	"src/main.cpp"
 	"src/application.h"
 	"src/application.cpp"
-	"src/shaderdata.h"
 	 "src/utils.h"
 	 "src/utils.cpp")
 
