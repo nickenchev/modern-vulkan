@@ -131,13 +131,13 @@ void Application::run()
 
 bool Application::initializeVulkan()
 {
-	if (vulkanInstance = createVulkanInstance(); !vulkanInstance)
+	if (!createVulkanInstance())
 	{
 		showError("Couldn't create a vulkan instance");
 		return false;
 	}
 
-	if (surface = createSurface(); !surface)
+	if (!createSurface())
 	{
 		showError("Couldn't create window surface");
 		return false;
@@ -194,13 +194,13 @@ bool Application::initializeVulkan()
 	return true;
 }
 
-VkInstance Application::createVulkanInstance() const
+bool Application::createVulkanInstance()
 {
 	// Initialize Volk and load Vk function pointers
 	if (volkInitialize() != VK_SUCCESS)
 	{
 		showError("Error initializing Volk");
-		return nullptr;
+		return false;
 	}
 
 	// Create the vulkan application instance
@@ -229,21 +229,22 @@ VkInstance Application::createVulkanInstance() const
 		.ppEnabledExtensionNames = extensions
 	};
 
-	VkInstance instance = nullptr;
-	if (vkCreateInstance(&instCreateInfo, nullptr, &instance) != VK_SUCCESS)
+	if (vkCreateInstance(&instCreateInfo, nullptr, &vulkanInstance) != VK_SUCCESS)
 	{
-		return nullptr;
+		return false;
 	}
 
-	volkLoadInstance(instance);
-	return instance;
+	volkLoadInstance(vulkanInstance);
+	return true;
 }
 
-VkSurfaceKHR Application::createSurface() const
+bool Application::createSurface()
 {
-	VkSurfaceKHR surface = nullptr;
-	SDL_Vulkan_CreateSurface(window, vulkanInstance, nullptr, &surface);
-	return surface;
+	if (!SDL_Vulkan_CreateSurface(window, vulkanInstance, nullptr, &surface))
+	{
+		return false;
+	}
+	return true;
 }
 
 VkPhysicalDevice Application::findPhysicalDevice()

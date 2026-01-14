@@ -81,8 +81,8 @@ class Application
 	void showError(const std::string &errorMessasge) const;
 
 	bool initializeVulkan();
-	VkInstance createVulkanInstance() const;
-	VkSurfaceKHR createSurface() const;
+	bool createVulkanInstance();
+	bool createSurface();
 	VkPhysicalDevice findPhysicalDevice();
 	bool createDevice(VkPhysicalDevice physicalDevice);
 	bool initializeVMA();
