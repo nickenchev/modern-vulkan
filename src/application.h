@@ -59,6 +59,9 @@ class Application
 	std::vector<VkImage> swapchainImages;
 	std::vector<VkImageView> swapchainImageViews;
 	std::vector<VkSemaphore> imageAcquireSemaphores;
+	bool requireSwapchainRecreate = false;
+	uint32_t swapchainWidth = 0;
+	uint32_t swapchainHeight = 0;
 
 	VkImage depthImage = nullptr;
 	VkImageView depthImageView = nullptr;
@@ -84,6 +87,7 @@ class Application
 	bool createDevice(VkPhysicalDevice physicalDevice);
 	bool initializeVMA();
 	VkSwapchainKHR createSwapchain(uint32_t width, uint32_t height);
+	void destroySwapchain();
 	VkShaderModule createShaderModule(const std::string &fileName, shaderc_shader_kind kind) const;
 	bool createShaders();
 	Pipeline createGraphicsPipeline() const;
