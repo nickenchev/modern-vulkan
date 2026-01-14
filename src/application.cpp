@@ -161,7 +161,7 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
-	if (swapchain = createSwapchain(width, height); !swapchain)
+	if (!createSwapchain(width, height))
 	{
 		showError("Unable to create swapchain");
 		return false;
@@ -439,7 +439,7 @@ bool Application::initializeVMA()
 	return true;
 }
 
-VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
+bool Application::createSwapchain(uint32_t width, uint32_t height)
 {
 	swapchainWidth = width;
 	swapchainHeight = height;
@@ -448,7 +448,7 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps) != VK_SUCCESS)
 	{
 		showError("Couldn't get the surface capabilities");
-		return nullptr;
+		return false;
 	}
 
 	VkSwapchainCreateInfoKHR swapchainCreateInfo
@@ -466,11 +466,10 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 		.presentMode = VK_PRESENT_MODE_FIFO_KHR
 	};
 
-	VkSwapchainKHR swapchain = nullptr;
 	if (vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain) != VK_SUCCESS)
 	{
 		showError("Error creating swapchain");
-		return nullptr;
+		return false;
 	}
 
 	// grab the swapchain images
@@ -500,7 +499,7 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 		if (vkCreateImageView(device, &imgViewInfo, nullptr, &swapchainImageViews[i]) != VK_SUCCESS)
 		{
 			showError("Error creating swapchain image view");
-			return nullptr;
+			return false;
 		}
 	}
 
@@ -527,7 +526,7 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 	if (vmaCreateImage(vmaAllocator, &depthCreateInfo, &allocInfo, &depthImage, &depthImageAllocation, nullptr) != VK_SUCCESS)
 	{
 		showError("Error allocating depth image");
-		return nullptr;
+		return false;
 	}
 
 	VkImageViewCreateInfo depthImgViewInfo
@@ -541,10 +540,10 @@ VkSwapchainKHR Application::createSwapchain(uint32_t width, uint32_t height)
 	if (vkCreateImageView(device, &depthImgViewInfo, nullptr, &depthImageView) != VK_SUCCESS)
 	{
 		showError("Error creating depth image view");
-		return nullptr;
+		return false;
 	}
 
-	return swapchain;
+	return true;
 }
 
 void Application::destroySwapchain()
@@ -857,7 +856,7 @@ void Application::render()
 	{
 		vkDeviceWaitIdle(device);
 		destroySwapchain();
-		swapchain = createSwapchain(width, height);
+		createSwapchain(width, height);
 		requireSwapchainRecreate = false;
 	}
 
