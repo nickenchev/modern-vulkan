@@ -557,11 +557,16 @@ void Application::destroySwapchain()
 	if (swapchain)
 	{
 		vkDestroySwapchainKHR(device, swapchain, nullptr);
+		swapchain = nullptr;
 	}
 
 	// destroy the depth buffer along with the swapchain
-	vkDestroyImageView(device, depthImageView, nullptr);
-	vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
+	if (depthImageView)
+	{
+		vkDestroyImageView(device, depthImageView, nullptr);
+		vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
+		depthImageView = nullptr;
+	}
 }
 
 VkShaderModule Application::createShaderModule(const std::string &fileName, shaderc_shader_kind kind) const
