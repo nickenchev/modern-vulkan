@@ -1065,7 +1065,7 @@ void Application::render()
 			.pResults = nullptr
 		};
 
-		vkQueuePresentKHR(gfxQueue, &presentInfo);
+		vkQueuePresentKHR(presentQueue, &presentInfo);
 	}
 }
 
