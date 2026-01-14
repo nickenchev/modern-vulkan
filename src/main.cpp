@@ -6,7 +6,7 @@ int main(int argc, char *argv[])
 	Application app;
 	if (app.initialize())
 	{
-		app.start();
+		app.run();
 	}
 	app.shutdown();
 
