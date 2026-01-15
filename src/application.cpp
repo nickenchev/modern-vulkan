@@ -149,6 +149,12 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
+	if (!findGraphicsQueue())
+	{
+		showError("Unable to find a compatible graphics queue");
+		return false;
+	}
+
 	if (!createDevice(physicalDevice))
 	{
 		showError("Couldn't create the logical GPU device");
@@ -207,7 +213,7 @@ bool Application::createVulkanInstance()
 	VkApplicationInfo appInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-		.pApplicationName = "Vulkan Learning",
+		.pApplicationName = "My First Triangle",
 		.apiVersion = VulkanVersion,
 	};
 
@@ -255,91 +261,67 @@ VkPhysicalDevice Application::findPhysicalDevice()
 	std::vector<VkPhysicalDevice> physicalDevices(physDeviceCount);
 	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, physicalDevices.data());
 
-	// find an appropriate physical device (GPU)
-	for (auto &pd : physicalDevices)
+	// default to the first GPU
+	VkPhysicalDevice physicalDevice = nullptr;
+
+	if (physDeviceCount)
 	{
-		bool hasGfxQueue = false;
-		bool hasPresentQueue = false;
-
-		// device has a graphics queue, ensure it has swapchain support
-		uint32_t extCount = 0;
-		vkEnumerateDeviceExtensionProperties(pd, nullptr, &extCount, nullptr);
-		std::vector<VkExtensionProperties> availableExtensions(extCount);
-		vkEnumerateDeviceExtensionProperties(pd, nullptr, &extCount, availableExtensions.data());
-
-		bool hasSwapchainSupport = false;
-		for (const auto &ext : availableExtensions)
+		// if you have issues, you can always just hardcode a GPU index while learning
+		physicalDevice = physicalDevices[0]; // default to first GPU
+		// look through list and see if a dGPU exists
+		for (auto &pDev : physicalDevices)
 		{
-			if (strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0)
+			VkPhysicalDeviceProperties props{};
+			vkGetPhysicalDeviceProperties(pDev, &props);
+			if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
 			{
-				hasSwapchainSupport = true;
+				physicalDevice = pDev;
 				break;
 			}
 		}
+	}
+	return physicalDevice;
+}
 
-		if (hasSwapchainSupport)
+bool Application::findGraphicsQueue()
+{
+	// eventually we'll have more complex queue lookup for presentation, etc
+	// grab all of the queue families
+	uint32_t queueFamCount = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, nullptr);
+	std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
+	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, queueFamProps.data());
+
+	for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size(); currentFamIdx++)
+	{
+		// ensure it has presentation support
+		VkBool32 hasPresentSupport = false;
+		vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, currentFamIdx, surface, &hasPresentSupport);
+
+		const auto &props = queueFamProps[currentFamIdx];
+		// ensure this is a GRAPHICS queue with presentation support
+		if (props.queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT && hasPresentSupport)
 		{
-			// grab all of the queue families
-			uint32_t queueFamCount = 0;
-			vkGetPhysicalDeviceQueueFamilyProperties2(pd, &queueFamCount, nullptr);
-			std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
-			vkGetPhysicalDeviceQueueFamilyProperties2(pd, &queueFamCount, queueFamProps.data());
-
-			for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size(); currentFamIdx++)
-			{
-				const auto &props = queueFamProps[currentFamIdx];
-				if (props.queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
-				{
-					gfxQueueFamIdx = currentFamIdx;
-					hasGfxQueue = true;
-				}
-
-				// ensure it has presentation support
-				VkBool32 hasPresentSupport = false;
-				if (vkGetPhysicalDeviceSurfaceSupportKHR(pd, currentFamIdx, surface, &hasPresentSupport) == VK_SUCCESS)
-				{
-					if (hasPresentSupport)
-					{
-						presentQueueFamIdx = currentFamIdx;
-						hasPresentQueue = true;
-					}
-				}
-				// prefer queue familes that have graphics and presenet
-				if (hasGfxQueue && hasPresentQueue)
-				{
-					return pd;
-				}
-			}
+			gfxQueueFamIdx = currentFamIdx;
+			return true;
 		}
 	}
-	return nullptr;
+	return false;
 }
+
 
 bool Application::createDevice(VkPhysicalDevice physicalDevice)
 {
 	float queuePriority = 1.0f;
 	std::vector<uint32_t> queueFamiles{ gfxQueueFamIdx };
 
-	std::vector<VkDeviceQueueCreateInfo> queueCreateInfos{
-		VkDeviceQueueCreateInfo
-		{
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.queueFamilyIndex = gfxQueueFamIdx,
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriority
-		}
-	};
-	if (gfxQueueFamIdx != presentQueueFamIdx)
+	VkDeviceQueueCreateInfo gfxQueueInfo
 	{
-		queueCreateInfos.push_back(
-			VkDeviceQueueCreateInfo
-			{
-				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-				.queueFamilyIndex = presentQueueFamIdx,
-				.queueCount = 1,
-				.pQueuePriorities = &queuePriority
-			});
-	}
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = gfxQueueFamIdx,
+		.queueCount = 1,
+		.pQueuePriorities = &queuePriority
+	};
 
 	// query suppoted features
 	VkPhysicalDeviceVulkan14Features supportedFeatures14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, .pNext = nullptr };
@@ -382,8 +364,8 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &features,
-		.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
-		.pQueueCreateInfos = queueCreateInfos.data(),
+		.queueCreateInfoCount = 1,
+		.pQueueCreateInfos = &gfxQueueInfo,
 		.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
 		.ppEnabledExtensionNames = deviceExtensions.data(),
 		.pEnabledFeatures = nullptr // features struct chain is set in pNext
@@ -394,25 +376,12 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 		return false;
 	}
 
-	// get the needed device queues (gfx only for now)
+	// grab the VkQueue object finally
 	vkGetDeviceQueue(device, gfxQueueFamIdx, 0, &gfxQueue);
 	if (!gfxQueue)
 	{
 		showError("Couldn't get the graphics queue");
 		return false;
-	}
-	presentQueue = gfxQueue; // initially assume both queues are the same
-
-	// if the graphics and present queue familes are different
-	// get another VkQueue for presentation
-	if (gfxQueueFamIdx != presentQueueFamIdx)
-	{
-		vkGetDeviceQueue(device, presentQueueFamIdx, 0, &presentQueue);
-		if (!presentQueue)
-		{
-			showError("Couldn't get the present queue");
-			return false;
-		}
 	}
 	return true;
 }
@@ -582,6 +551,7 @@ VkShaderModule Application::createShaderModule(const std::string &fileName, shad
 	}
 
 	// compile the shader to SPIR-V
+	std::cout << "Compiling shader: " << shaderPath << std::endl;
 	shaderc::Compiler compiler;
 	shaderc::CompileOptions opts;
 	opts.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_4);
@@ -1100,6 +1070,6 @@ void Application::render()
 		.pResults = nullptr
 	};
 
-	vkQueuePresentKHR(presentQueue, &presentInfo);
+	vkQueuePresentKHR(gfxQueue, &presentInfo);
 }
 

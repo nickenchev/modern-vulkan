@@ -50,9 +50,7 @@ class Application
 
 	// queue related
 	uint32_t gfxQueueFamIdx = UINT32_MAX;
-	uint32_t presentQueueFamIdx = UINT32_MAX;
 	VkQueue gfxQueue = nullptr;
-	VkQueue presentQueue = nullptr;
 
 	// swapchain related
 	VkSwapchainKHR swapchain = nullptr;
@@ -84,6 +82,7 @@ class Application
 	bool createVulkanInstance();
 	bool createSurface();
 	VkPhysicalDevice findPhysicalDevice();
+	bool findGraphicsQueue();
 	bool createDevice(VkPhysicalDevice physicalDevice);
 	bool initializeVMA();
 	bool createSwapchain(uint32_t width, uint32_t height);
