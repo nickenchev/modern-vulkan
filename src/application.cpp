@@ -38,17 +38,13 @@ void Application::shutdown()
 	vkDeviceWaitIdle(device);
 
 	// frame / sync object cleanup
-	for (VkSemaphore semaphore : imageAcquireSemaphores)
-	{
-		vkDestroySemaphore(device, semaphore, nullptr);
-	}
 	if (timelineSemaphore)
 	{
 		vkDestroySemaphore(device, timelineSemaphore, nullptr);
 	}
 	for (auto &res : frameResources)
 	{
-		vkDestroySemaphore(device, res.workCompleteSemaphore, nullptr);
+		vkDestroySemaphore(device, res.imageAcquiredSemaphore, nullptr);
 		vkDestroyCommandPool(device, res.commandPool, nullptr); // destroys buffers implicitly
 	}
 
@@ -450,7 +446,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 	swapchainImageViews.resize(imageCount);
 
 	// create the swapchain image views
-	for (int i = 0; i < imageCount; ++i)
+	for (size_t i = 0; i < swapchainImages.size(); ++i)
 	{
 		VkImageViewCreateInfo imgViewInfo
 		{
@@ -469,6 +465,18 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		if (vkCreateImageView(device, &imgViewInfo, nullptr, &swapchainImageViews[i]) != VK_SUCCESS)
 		{
 			showError("Error creating swapchain image view");
+			return false;
+		}
+	}
+
+	// semaphores used to signal render completion
+	renderCompleteSemaphores.resize(swapchainImages.size());
+	for (VkSemaphore &semaphore : renderCompleteSemaphores)
+	{
+		VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS)
+		{
+			showError("Error creating the render-complete semaphore");
 			return false;
 		}
 	}
@@ -523,6 +531,13 @@ void Application::destroySwapchain()
 		vkDestroyImageView(device, swapchainImgView, nullptr);
 	}
 	swapchainImageViews.clear();
+
+	// destroy render-complete ssemaphores
+	for (VkSemaphore &semaphore : renderCompleteSemaphores)
+	{
+		vkDestroySemaphore(device, semaphore, nullptr);
+	}
+	renderCompleteSemaphores.clear();
 
 	if (swapchain)
 	{
@@ -763,27 +778,14 @@ bool Application::createSyncResources()
 		return false;
 	}
 
-	// create semaphores for image acquisition signalling
-	// need an extra one to avoid overlap (eg frame 3 needs image, frame 1 still presenting)
-	imageAcquireSemaphores.resize(MaxFramesInFlight + 1);
-	for (auto &semaphore : imageAcquireSemaphores)
-	{
-		VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS)
-		{
-			showError("Unable to create the image acquire semaphore(s)");
-			return false;
-		}
-	}
-
-	// per-frame binary semaphores
+	// per-frame image-acquire semaphores
 	for (FrameResources &res : frameResources)
 	{
 		// create the binary semaphores
 		VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &res.workCompleteSemaphore) != VK_SUCCESS)
+		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &res.imageAcquiredSemaphore) != VK_SUCCESS)
 		{
-			showError("Error creating the per-frame render-complete semaphore");
+			showError("Error creating the per-frame image-acquire semaphore");
 			return false;
 		}
 	}
@@ -836,14 +838,26 @@ void Application::render()
 		requireSwapchainRecreate = false;
 	}
 
-	// start processing the frame
+	const uint32_t frameResIndex = frameCounter % MaxFramesInFlight;
+	// wait for frame using this frame's resources to complete
 	uint64_t frameId = ++timelineValue; // this is our frame "ID", and what we're using to signal the end of this frame later
 	uint64_t waitForId = frameId - MaxFramesInFlight; // frame N and frame N - MaxInFlight share resources (3 - 2 = 1 -- frame 3 and 1 share resources)
 
+	VkSemaphoreWaitInfo waitInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+		.semaphoreCount = 1,
+		.pSemaphores = &timelineSemaphore,
+		.pValues = &waitForId
+	};
+	vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
+
+	// now its safe to start recording commands
+	FrameResources &res = frameResources[frameResIndex];
+	vkResetCommandPool(device, res.commandPool, 0); // resets all buffers
+
 	// get the resources for this frame
-	VkSemaphore imageAcquireSemaphore = imageAcquireSemaphores[waitForId % imageAcquireSemaphores.size()];
-	size_t frameResourceIndex = frameId % MaxFramesInFlight;
-	FrameResources &res = frameResources[frameResourceIndex]; // 0,1,0,1,0,...
+	VkSemaphore imageAcquireSemaphore = frameResources[frameResIndex].imageAcquiredSemaphore;
 
 	// acquire the swapchain image, no need to wait for timeline semaphore just to then wait for the swapchain image
 	uint32_t imageIndex = 0;
@@ -860,19 +874,6 @@ void Application::render()
 		// can render this frame, recreate next time around
 		requireSwapchainRecreate = true;
 	}
-
-	// wait for frame using this frame's resources to complete
-	VkSemaphoreWaitInfo waitInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-		.semaphoreCount = 1,
-		.pSemaphores = &timelineSemaphore,
-		.pValues = &waitForId
-	};
-	vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
-
-	// now its safe to start recording commands
-	vkResetCommandPool(device, res.commandPool, 0); // resets all buffers
 
 	// begin recording commands
 	VkCommandBufferBeginInfo cmdBeginInfo
@@ -1025,14 +1026,15 @@ void Application::render()
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 		.semaphore = imageAcquireSemaphore,
-		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
+		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | // wait before drawing to image
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT // prevent depth buffer clearing before image is ready
 	};
 	// signal that the image can be presented
 	std::vector<VkSemaphoreSubmitInfo> semaphoreSignals
 	{
 		{ // render work completion signal
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-			.semaphore = res.workCompleteSemaphore,
+			.semaphore = renderCompleteSemaphores[imageIndex],
 			.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
 		},
 		{ // entire frame is completed (timeline)
@@ -1063,7 +1065,7 @@ void Application::render()
 	VkPresentInfoKHR presentInfo{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &res.workCompleteSemaphore, // render work completed semaphore
+		.pWaitSemaphores = &renderCompleteSemaphores[imageIndex], // render work completed semaphore
 		.swapchainCount = 1,
 		.pSwapchains = &swapchain,
 		.pImageIndices = &imageIndex,
@@ -1071,5 +1073,6 @@ void Application::render()
 	};
 
 	vkQueuePresentKHR(gfxQueue, &presentInfo);
+	frameCounter++;
 }
 

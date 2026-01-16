@@ -23,8 +23,10 @@ struct Pipeline
 
 struct FrameResources
 {
+	uint32_t lastFrameId = 0;
 	VkCommandPool commandPool = nullptr;
 	VkCommandBuffer commandBuffer = nullptr;
+	VkSemaphore imageAcquiredSemaphore = nullptr;
 	VkSemaphore workCompleteSemaphore = nullptr;
 };
 
@@ -39,6 +41,7 @@ class Application
 	uint32_t width = 1280;
 	uint32_t height = 720;
 	bool running = false;
+	uint64_t frameCounter = 0;
 	uint64_t timelineValue = MaxFramesInFlight - 1; // subtract 1 to ensure wait-for-ID / frame resource index start at 0 during render, avoids if (frameId < MaxFramesInFlight) check
 
 	// vulkan core
@@ -56,7 +59,7 @@ class Application
 	VkSwapchainKHR swapchain = nullptr;
 	std::vector<VkImage> swapchainImages;
 	std::vector<VkImageView> swapchainImageViews;
-	std::vector<VkSemaphore> imageAcquireSemaphores;
+	std::vector<VkSemaphore> renderCompleteSemaphores;
 	bool requireSwapchainRecreate = false;
 	uint32_t swapchainWidth = 0;
 	uint32_t swapchainHeight = 0;
