@@ -8,6 +8,7 @@
 #include <vma/vk_mem_alloc.h>
 
 #include <iostream>
+#include <tiny_gltf.h>
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -28,6 +29,8 @@ bool Application::initialize()
 	{
 		return false;
 	}
+
+	loadModel();
 
 	return true;
 }
@@ -1074,5 +1077,21 @@ void Application::render()
 
 	vkQueuePresentKHR(gfxQueue, &presentInfo);
 	frameCounter++;
+}
+
+void Application::loadModel()
+{
+	using namespace tinygltf;
+	Model model;
+	TinyGLTF loader;
+
+	std::string err;
+	std::string warn;
+	loader.LoadASCIIFromFile(&model, &err, &warn, "C:/Developer/glTF-Sample-Models-main/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
+
+	if (model.scenes.size())
+	{
+
+	}
 }
 

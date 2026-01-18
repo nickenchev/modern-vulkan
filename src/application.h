@@ -97,6 +97,8 @@ class Application
 	bool createCommandBuffers();
 	void render();
 
+	void loadModel();
+
 public:
 	bool initialize();
 	void shutdown();
