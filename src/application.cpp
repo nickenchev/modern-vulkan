@@ -13,9 +13,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 
-void Application::showError(const std::string &errorMessasge) const
+void Application::showError(const std::string &errorMessage) const
 {
-	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessasge.c_str(), window);
+	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessage.c_str(), window);
 }
 
 bool Application::initialize()
