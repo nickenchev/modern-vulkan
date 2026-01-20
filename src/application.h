@@ -6,14 +6,14 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <array>
-#include <string>
 #include <shaderc/shaderc.hpp>
+#include <glm/glm.hpp>
 
 struct SDL_Window;
 struct VmaAllocator_T;
-typedef struct VmaAllocator_T* VmaAllocator;
+typedef struct VmaAllocator_T *VmaAllocator;
 struct VmaAllocation_T;
-typedef struct VmaAllocation_T* VmaAllocation;
+typedef struct VmaAllocation_T *VmaAllocation;
 
 struct Pipeline
 {
@@ -30,11 +30,37 @@ struct FrameResources
 	VkSemaphore workCompleteSemaphore = nullptr;
 };
 
-struct Buffer
+namespace Renderer
 {
-	VkBuffer buffer = nullptr;
-	VmaAllocation allocation = nullptr;
-};
+	struct Buffer
+	{
+		VkBuffer buffer = nullptr;
+		VmaAllocation allocation = nullptr;
+	};
+
+	struct Image
+	{
+	};
+
+	struct Vertex
+	{
+		glm::vec3 position;
+		glm::vec2 uv;
+	};
+
+	struct SubMesh
+	{
+		size_t vertexStart = 0;
+		size_t vertexCount = 0;
+		size_t indexStart = 0;
+		size_t indexCount = 0;
+	};
+
+	struct Mesh
+	{
+		std::vector<SubMesh> subMeshes;
+	};
+}
 
 class Application
 {
@@ -46,7 +72,7 @@ class Application
 	uint64_t prevTime = 0;
 	uint64_t nowTime = 0;
 	double globalTime = 0;
-	SDL_Window* window = nullptr;
+	SDL_Window *window = nullptr;
 	uint32_t width = 1280;
 	uint32_t height = 720;
 	bool running = false;
@@ -88,8 +114,8 @@ class Application
 	VkSemaphore timelineSemaphore = nullptr;
 	std::array<FrameResources, MaxFramesInFlight> frameResources;
 
-	Buffer vertexBuffer;
-	Buffer indexBuffer;
+	Renderer::Buffer vertexBuffer;
+	Renderer::Buffer indexBuffer;
 
 	void showError(const std::string &errorMessasge) const;
 

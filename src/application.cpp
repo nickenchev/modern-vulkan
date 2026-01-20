@@ -10,7 +10,6 @@
 #include <iostream>
 #include <tiny_gltf.h>
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 struct DrawConstants
@@ -21,29 +20,8 @@ struct DrawConstants
 	glm::mat4 mvp;
 };
 
-struct Vertex
-{
-	glm::vec3 position;
-};
-
-namespace Renderer
-{
-	struct SubMesh
-	{
-		size_t vertexStart = 0;
-		size_t vertexCount = 0;
-		size_t indexStart = 0;
-		size_t indexCount = 0;
-	};
-
-	struct Mesh
-	{
-		std::vector<SubMesh> subMeshes;
-	};
-}
-
 std::vector<Renderer::Mesh> meshes;
-std::vector<Vertex> vertices;
+std::vector<Renderer::Vertex> vertices;
 std::vector<uint32_t> indices;
 
 void Application::showError(const std::string &errorMessasge) const
@@ -1064,7 +1042,7 @@ void Application::render(float deltaTime)
 		glm::mat4 transform = translate * rotation * scale;
 
 		// BDA Send Device Pointer
-		VkBufferDeviceAddressInfo vertBdaInfo { .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = vertexBuffer.buffer };
+		VkBufferDeviceAddressInfo vertBdaInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = vertexBuffer.buffer };
 		DrawConstants pushConsts
 		{
 			.vertexBufferAddress = vkGetBufferDeviceAddress(device, &vertBdaInfo),
@@ -1172,10 +1150,29 @@ void Application::render(float deltaTime)
 void loadNode(tinygltf::Node &node, tinygltf::Model &model)
 {
 	using namespace tinygltf;
-	if (node.mesh != -1)
+
+	for (int childNodeIndex : node.children)
+	{
+		loadNode(model.nodes[childNodeIndex], model);
+	}
+}
+
+void Application::loadModel()
+{
+	using namespace tinygltf;
+	Model model;
+	TinyGLTF loader;
+
+	std::string err;
+	std::string warn;
+	//loader.LoadASCIIFromFile(&model, &err, &warn, "C:/Users/nikol/Desktop/untitled.gltf");
+	loader.LoadASCIIFromFile(&model, &err, &warn, "D:/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
+	//loader.LoadASCIIFromFile(&model, &err, &warn, "S:/projects/boiler-3d/data/sorceress/scene.gltf");
+
+	// load all meshes first
+	for (const Mesh &mesh : model.meshes)
 	{
 		Renderer::Mesh newMesh;
-		const tinygltf::Mesh &mesh = model.meshes[node.mesh];
 		for (const Primitive &primitive : mesh.primitives)
 		{
 			Renderer::SubMesh subMesh;
@@ -1195,9 +1192,27 @@ void loadNode(tinygltf::Node &node, tinygltf::Model &model)
 					for (int i = 0; i < access.count; ++i)
 					{
 						size_t offset = bv.byteOffset + access.byteOffset + i * ((bv.byteStride > 0) ? bv.byteStride : sizeof(glm::vec3));
-						const glm::vec3 *pos = reinterpret_cast<const glm::vec3 *>(buffer.data.data() + + offset);
-						vertices.push_back(Vertex{ .position = *pos });
+						const glm::vec3 *pos = reinterpret_cast<const glm::vec3 *>(buffer.data.data() + offset);
+						vertices.push_back(Renderer::Vertex{ .position = *pos });
 						subMesh.vertexCount++;
+					}
+				}
+			}
+			// load primitive vertices into sub-mesh
+			if (const auto &itr = primitive.attributes.find("TEXCOORD_0"); itr != primitive.attributes.end())
+			{
+				const auto &[name, index] = *itr;
+				const Accessor &access = model.accessors[index];
+				const BufferView &bv = model.bufferViews[access.bufferView];
+				const tinygltf::Buffer &buffer = model.buffers[bv.buffer];
+
+				if (access.type == TINYGLTF_TYPE_VEC2)
+				{
+					for (int i = 0; i < access.count; ++i)
+					{
+						size_t offset = bv.byteOffset + access.byteOffset + i * ((bv.byteStride > 0) ? bv.byteStride : sizeof(glm::vec2));
+						const glm::vec2 *uv = reinterpret_cast<const glm::vec2 *>(buffer.data.data() + offset);
+						vertices[subMesh.vertexStart + i].uv = *uv;
 					}
 				}
 			}
@@ -1231,33 +1246,6 @@ void loadNode(tinygltf::Node &node, tinygltf::Model &model)
 		meshes.push_back(newMesh);
 	}
 
-	for (int childNodeIndex : node.children)
-	{
-		loadNode(model.nodes[childNodeIndex], model);
-	}
-}
-
-void Application::loadModel()
-{
-	tinygltf::Model model;
-	tinygltf::TinyGLTF loader;
-
-	std::string err;
-	std::string warn;
-	//loader.LoadASCIIFromFile(&model, &err, &warn, "C:/Users/nikol/Desktop/untitled.gltf");
-	loader.LoadASCIIFromFile(&model, &err, &warn, "D:/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
-	//loader.LoadASCIIFromFile(&model, &err, &warn, "S:/projects/boiler-3d/data/sorceress/scene.gltf");
-
-	if (model.scenes.size())
-	{
-		using namespace tinygltf;
-		Scene &scene = model.scenes[0];
-		for (int nodeIdx : scene.nodes)
-		{
-			loadNode(model.nodes[nodeIdx], model);
-		}
-	}
-
 	auto createBuffer = [](VmaAllocator &vmaAllocator, VkBufferUsageFlags usage, size_t byteSize, void *initData)
 	{
 		VkBufferCreateInfo buffInfo
@@ -1274,7 +1262,7 @@ void Application::loadModel()
 			.usage = VMA_MEMORY_USAGE_CPU_TO_GPU
 		};
 
-		Buffer newBuff;
+		Renderer::Buffer newBuff;
 		if (vmaCreateBuffer(vmaAllocator, &buffInfo, &allocInfo, &newBuff.buffer, &newBuff.allocation, nullptr) != VK_SUCCESS)
 		{
 			//showError("Error allocating buffer");
@@ -1293,7 +1281,7 @@ void Application::loadModel()
 	};
 
 	vertexBuffer = createBuffer(vmaAllocator, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-		sizeof(Vertex) * vertices.size(), vertices.data());
+		sizeof(Renderer::Vertex) * vertices.size(), vertices.data());
 	indexBuffer = createBuffer(vmaAllocator, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		sizeof(uint32_t) * indices.size(), indices.data());
 }

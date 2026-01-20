@@ -13,6 +13,7 @@ layout (location = 0) out vec3 outColor;
 struct Vertex
 {
     vec3 position;
+    vec2 uv;
 };
 
 layout(buffer_reference, scalar) readonly buffer VertexPtr
