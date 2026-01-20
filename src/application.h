@@ -30,6 +30,12 @@ struct FrameResources
 	VkSemaphore workCompleteSemaphore = nullptr;
 };
 
+struct Buffer
+{
+	VkBuffer buffer = nullptr;
+	VmaAllocation allocation = nullptr;
+};
+
 class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
@@ -37,6 +43,9 @@ class Application
 	constexpr static VkFormat swapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT };
 
+	uint64_t prevTime = 0;
+	uint64_t nowTime = 0;
+	double globalTime = 0;
 	SDL_Window* window = nullptr;
 	uint32_t width = 1280;
 	uint32_t height = 720;
@@ -79,6 +88,9 @@ class Application
 	VkSemaphore timelineSemaphore = nullptr;
 	std::array<FrameResources, MaxFramesInFlight> frameResources;
 
+	Buffer vertexBuffer;
+	Buffer indexBuffer;
+
 	void showError(const std::string &errorMessasge) const;
 
 	bool initializeVulkan();
@@ -95,7 +107,7 @@ class Application
 	Pipeline createGraphicsPipeline() const;
 	bool createSyncResources();
 	bool createCommandBuffers();
-	void render();
+	void render(float deltaTime);
 
 	void loadModel();
 

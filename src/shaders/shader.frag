@@ -6,5 +6,6 @@ layout(location = 0) out vec4 fragColor;
 
 void main()
 {
-	fragColor = vec4(inColor, 1.0);
+	float brightness = 1.0 - gl_FragCoord.z;
+	fragColor = vec4(inColor * brightness, 1.0);
 }

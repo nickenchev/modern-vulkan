@@ -9,6 +9,42 @@
 
 #include <iostream>
 #include <tiny_gltf.h>
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+struct DrawConstants
+{
+	uint64_t vertexBufferAddress = 0;
+	float globalTime = 0;
+	float padding = 0;
+	glm::mat4 mvp;
+};
+
+struct Vertex
+{
+	glm::vec3 position;
+};
+
+namespace Renderer
+{
+	struct SubMesh
+	{
+		size_t vertexStart = 0;
+		size_t vertexCount = 0;
+		size_t indexStart = 0;
+		size_t indexCount = 0;
+	};
+
+	struct Mesh
+	{
+		std::vector<SubMesh> subMeshes;
+	};
+}
+
+std::vector<Renderer::Mesh> meshes;
+std::vector<Vertex> vertices;
+std::vector<uint32_t> indices;
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -39,6 +75,10 @@ void Application::shutdown()
 {
 	// wait in case resources are in use
 	vkDeviceWaitIdle(device);
+
+	// destroy allocated buffers
+	vmaDestroyBuffer(vmaAllocator, vertexBuffer.buffer, vertexBuffer.allocation);
+	vmaDestroyBuffer(vmaAllocator, indexBuffer.buffer, indexBuffer.allocation);
 
 	// frame / sync object cleanup
 	if (timelineSemaphore)
@@ -106,8 +146,14 @@ void Application::shutdown()
 void Application::run()
 {
 	running = true;
+	prevTime = SDL_GetTicks();
 	while (running)
 	{
+		nowTime = SDL_GetTicks();
+		float deltaTime = (nowTime - prevTime) / 1000.0f;
+		prevTime = nowTime;
+		globalTime += deltaTime;
+
 		SDL_Event event{ 0 };
 		while (SDL_PollEvent(&event))
 		{
@@ -123,8 +169,7 @@ void Application::run()
 				break;
 			}
 		}
-
-		render();
+		render(deltaTime);
 	}
 }
 
@@ -354,9 +399,15 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 	{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		.pNext = &features13,
-		.timelineSemaphore = VK_TRUE
+		.scalarBlockLayout = VK_TRUE,
+		.timelineSemaphore = VK_TRUE,
+		.bufferDeviceAddress = VK_TRUE
 	};
-	VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &features12 };
+	VkPhysicalDeviceFeatures2 features{
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+		.pNext = &features12,
+		.features {.shaderInt64 = VK_TRUE }
+	};
 
 	const std::vector<const char *> deviceExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 	VkDeviceCreateInfo devCreateInfo
@@ -673,7 +724,8 @@ Pipeline Application::createGraphicsPipeline() const
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.polygonMode = VK_POLYGON_MODE_FILL,
-		.cullMode = VK_CULL_MODE_BACK_BIT,
+		.cullMode = VK_CULL_MODE_NONE,
+		//.cullMode = VK_CULL_MODE_BACK_BIT,
 		.frontFace = VK_FRONT_FACE_CLOCKWISE,
 		.lineWidth = 1.0f
 	};
@@ -718,18 +770,26 @@ Pipeline Application::createGraphicsPipeline() const
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
 		.colorAttachmentCount = 1,
 		.pColorAttachmentFormats = &swapchainFormat,
-		.depthAttachmentFormat = depthFormat
+		.depthAttachmentFormat = depthFormat,
 	};
 
 	// Create the graphics pipeline
 	Pipeline pipeline;
 
 	// need to define a pipeline layout
+	VkPushConstantRange pushConstRange
+	{
+		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		.offset = 0,
+		.size = sizeof(DrawConstants)
+	};
+
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount = 0,
-		.pushConstantRangeCount = 0
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &pushConstRange
 	};
 	if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipeline.layout) != VK_SUCCESS)
 	{
@@ -830,7 +890,7 @@ bool Application::createCommandBuffers()
 	return true;
 }
 
-void Application::render()
+void Application::render(float deltaTime)
 {
 	// first check if our swapchain is still valid
 	if (requireSwapchainRecreate)
@@ -841,7 +901,7 @@ void Application::render()
 		requireSwapchainRecreate = false;
 	}
 
-	const uint32_t frameResIndex = frameCounter % MaxFramesInFlight;
+	const uint32_t frameResIndex = frameCounter++ % MaxFramesInFlight;
 	// wait for frame using this frame's resources to complete
 	uint64_t frameId = ++timelineValue; // this is our frame "ID", and what we're using to signal the end of this frame later
 	uint64_t waitForId = frameId - MaxFramesInFlight; // frame N and frame N - MaxInFlight share resources (3 - 2 = 1 -- frame 3 and 1 share resources)
@@ -909,8 +969,8 @@ void Application::render()
 		},
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-			.srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-			.srcAccessMask = 0,
+			.srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, // both specified to control memory access at both stages (write)
+			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 			.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, // both specified to control memory access at both stages (write)
 			.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -942,7 +1002,7 @@ void Application::render()
 		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the image
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // keep data for presentation
-		.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
+		.clearValue{.color{0.0f, 0.0f, 0.0f, 1}}
 	};
 	VkRenderingAttachmentInfo depthAttachInfo
 	{
@@ -975,7 +1035,9 @@ void Application::render()
 		{
 			.x = 0, .y = 0,
 			.width = static_cast<float>(swapchainWidth),
-			.height = static_cast<float>(swapchainHeight)
+			.height = static_cast<float>(swapchainHeight),
+			.minDepth = 0,
+			.maxDepth = 1.0f,
 		};
 		vkCmdSetViewport(res.commandBuffer, 0, 1, &viewport);
 
@@ -988,8 +1050,37 @@ void Application::render()
 
 		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
 
-		// draw our triangle
-		vkCmdDraw(res.commandBuffer, 3, 1, 0, 0);
+
+		constexpr float fov = glm::radians(45.0);
+		float aspect = static_cast<float>(width) / static_cast<float>(height);
+		float nearP = 0.1f;
+		float farP = 32.0f;
+
+		glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / (float)height, nearP, farP);
+		proj[1][1] *= -1;
+		glm::mat4 rotation = glm::rotate(glm::mat4(1), static_cast<float>(globalTime), glm::vec3(0, 1, 0));
+		glm::mat4 translate = glm::translate(glm::mat4(1), glm::vec3(0, -0.4, -1));
+		glm::mat4 scale = glm::scale(glm::mat4(1), glm::vec3(1.0f, 1.0f, 1.0f));
+		glm::mat4 transform = translate * rotation * scale;
+
+		// BDA Send Device Pointer
+		VkBufferDeviceAddressInfo vertBdaInfo { .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = vertexBuffer.buffer };
+		DrawConstants pushConsts
+		{
+			.vertexBufferAddress = vkGetBufferDeviceAddress(device, &vertBdaInfo),
+			.globalTime = static_cast<float>(globalTime),
+			.mvp = proj * transform
+		};
+		vkCmdPushConstants(res.commandBuffer, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(DrawConstants), &pushConsts);
+
+		vkCmdBindIndexBuffer(res.commandBuffer, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+		for (Renderer::Mesh &mesh : meshes)
+		{
+			for (Renderer::SubMesh &sub : mesh.subMeshes)
+			{
+				vkCmdDrawIndexed(res.commandBuffer, sub.indexCount, 1, sub.indexStart, sub.vertexStart, 0);
+			}
+		}
 	}
 	// end dynamic rendering
 	vkCmdEndRendering(res.commandBuffer);
@@ -1076,22 +1167,134 @@ void Application::render()
 	};
 
 	vkQueuePresentKHR(gfxQueue, &presentInfo);
-	frameCounter++;
+}
+
+void loadNode(tinygltf::Node &node, tinygltf::Model &model)
+{
+	using namespace tinygltf;
+	if (node.mesh != -1)
+	{
+		Renderer::Mesh newMesh;
+		const tinygltf::Mesh &mesh = model.meshes[node.mesh];
+		for (const Primitive &primitive : mesh.primitives)
+		{
+			Renderer::SubMesh subMesh;
+			subMesh.vertexStart = vertices.size();
+			subMesh.indexStart = indices.size();
+
+			// load primitive vertices into sub-mesh
+			if (const auto &itr = primitive.attributes.find("POSITION"); itr != primitive.attributes.end())
+			{
+				const auto &[name, index] = *itr;
+				const Accessor &access = model.accessors[index];
+				const BufferView &bv = model.bufferViews[access.bufferView];
+				const tinygltf::Buffer &buffer = model.buffers[bv.buffer];
+
+				if (access.type == TINYGLTF_TYPE_VEC3)
+				{
+					for (int i = 0; i < access.count; ++i)
+					{
+						size_t offset = bv.byteOffset + access.byteOffset + i * ((bv.byteStride > 0) ? bv.byteStride : sizeof(glm::vec3));
+						const glm::vec3 *pos = reinterpret_cast<const glm::vec3 *>(buffer.data.data() + + offset);
+						vertices.push_back(Vertex{ .position = *pos });
+						subMesh.vertexCount++;
+					}
+				}
+			}
+			// indices
+			if (primitive.indices != -1)
+			{
+				const Accessor &access = model.accessors[primitive.indices];
+				const BufferView &bv = model.bufferViews[access.bufferView];
+				const tinygltf::Buffer &buffer = model.buffers[bv.buffer];
+				subMesh.indexCount = access.count;
+
+				if (access.type == TINYGLTF_TYPE_SCALAR && access.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
+				{
+					for (int i = 0; i < access.count; ++i)
+					{
+						const uint32_t *idx = reinterpret_cast<const uint32_t *>(buffer.data.data() + bv.byteOffset + access.byteOffset) + i;
+						indices.push_back(*idx);
+					}
+				}
+				else if (access.type == TINYGLTF_TYPE_SCALAR && access.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+				{
+					for (int i = 0; i < access.count; ++i)
+					{
+						const uint16_t *idx = reinterpret_cast<const uint16_t *>(buffer.data.data() + bv.byteOffset + access.byteOffset) + i;
+						indices.push_back(*idx);
+					}
+				}
+			}
+			newMesh.subMeshes.push_back(subMesh);
+		}
+		meshes.push_back(newMesh);
+	}
+
+	for (int childNodeIndex : node.children)
+	{
+		loadNode(model.nodes[childNodeIndex], model);
+	}
 }
 
 void Application::loadModel()
 {
-	using namespace tinygltf;
-	Model model;
-	TinyGLTF loader;
+	tinygltf::Model model;
+	tinygltf::TinyGLTF loader;
 
 	std::string err;
 	std::string warn;
-	loader.LoadASCIIFromFile(&model, &err, &warn, "C:/Developer/glTF-Sample-Models-main/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
+	//loader.LoadASCIIFromFile(&model, &err, &warn, "C:/Users/nikol/Desktop/untitled.gltf");
+	loader.LoadASCIIFromFile(&model, &err, &warn, "D:/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
+	//loader.LoadASCIIFromFile(&model, &err, &warn, "S:/projects/boiler-3d/data/sorceress/scene.gltf");
 
 	if (model.scenes.size())
 	{
-
+		using namespace tinygltf;
+		Scene &scene = model.scenes[0];
+		for (int nodeIdx : scene.nodes)
+		{
+			loadNode(model.nodes[nodeIdx], model);
+		}
 	}
+
+	auto createBuffer = [](VmaAllocator &vmaAllocator, VkBufferUsageFlags usage, size_t byteSize, void *initData)
+	{
+		VkBufferCreateInfo buffInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = byteSize,
+			.usage = usage,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE
+		};
+
+		VmaAllocationCreateInfo allocInfo
+		{
+			.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
+			.usage = VMA_MEMORY_USAGE_CPU_TO_GPU
+		};
+
+		Buffer newBuff;
+		if (vmaCreateBuffer(vmaAllocator, &buffInfo, &allocInfo, &newBuff.buffer, &newBuff.allocation, nullptr) != VK_SUCCESS)
+		{
+			//showError("Error allocating buffer");
+		}
+
+		void *buffPtr = nullptr;
+		if (vmaMapMemory(vmaAllocator, newBuff.allocation, &buffPtr) != VK_SUCCESS)
+		{
+			//showError("Unable to map buffer memory");
+		}
+		std::memcpy(static_cast<char *>(buffPtr), initData, buffInfo.size);
+		const glm::vec3 *vec3Ptr = reinterpret_cast<const glm::vec3 *>(buffPtr);
+		vmaUnmapMemory(vmaAllocator, newBuff.allocation);
+
+		return newBuff;
+	};
+
+	vertexBuffer = createBuffer(vmaAllocator, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		sizeof(Vertex) * vertices.size(), vertices.data());
+	indexBuffer = createBuffer(vmaAllocator, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		sizeof(uint32_t) * indices.size(), indices.data());
 }
 

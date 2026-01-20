@@ -1,22 +1,38 @@
 #version 460
 
-const vec3 positions[3] = vec3[]
-(
-    vec3( 0.0, -0.5, 0.0), // Top
-    vec3( 0.5,  0.5, 0.0), // Bottom Right
-    vec3(-0.5,  0.5, 0.0)  // Bottom Left
-);
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-const vec3 colors[3] = vec3[]
-(
-    vec3(1.0, 0.0, 0.0), // Red
-    vec3(0.0, 1.0, 0.0), // Green
-    vec3(0.0, 0.0, 1.0)  // Blue
-);
+#define M_PI 3.1415926535897932384626433832795
+#define M_2PI M_PI * 2
 
 layout (location = 0) out vec3 outColor;
 
-void main() {
-    gl_Position = vec4(positions[gl_VertexIndex], 1.0);
-    outColor = colors[gl_VertexIndex];
+struct Vertex
+{
+    vec3 position;
+};
+
+layout(buffer_reference, scalar) readonly buffer VertexPtr
+{
+    Vertex vertices[];
+};
+
+layout(push_constant, scalar) uniform DrawConstants
+{
+    uint64_t vertexAddress;
+    float globalTime;
+    float padding;
+    mat4 mvp;
+} drawConsts;
+
+void main()
+{
+    VertexPtr vBuffer = VertexPtr(drawConsts.vertexAddress);
+    vec3 pos = vBuffer.vertices[gl_VertexIndex].position;
+    gl_Position = drawConsts.mvp * vec4(pos, 1.0);
+
+    outColor = vec3(1, 1, 1);
 }
