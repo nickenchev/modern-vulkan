@@ -20,16 +20,23 @@ void Application::showError(const std::string &errorMessage) const
 
 bool Application::initialize()
 {
-	SDL_InitSubSystem(SDL_INIT_VIDEO);
-	window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-	if (!window)
+	if (SDL_InitSubSystem(SDL_INIT_VIDEO))
 	{
-		showError("Error creating window");
-		return false;
-	}
+		window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+		if (!window)
+		{
+			showError("Error creating window");
+			return false;
+		}
 
-	if (!initializeVulkan())
+		if (!initializeVulkan())
+		{
+			return false;
+		}
+	}
+	else
 	{
+		showError("Unable to initialize SDL3");
 		return false;
 	}
 
@@ -239,22 +246,45 @@ bool Application::createVulkanInstance()
 		.apiVersion = VulkanVersion,
 	};
 
+	// find the required extensions for the platform and add debug for ourselves
 	uint32_t instExtCount = 0;
 	const char *const *extensions = SDL_Vulkan_GetInstanceExtensions(&instExtCount);
+	std::vector<const char *> requestedExtensions
+	{
+		VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+	};
+	for (int i = 0; i < instExtCount; ++i)
+	{
+		requestedExtensions.push_back(extensions[i]);
+	}
 
+
+	// we'll also need to enable the validation layer for error checking and reporting
 	std::vector<const char *> requestedLayers
 	{
 		"VK_LAYER_KHRONOS_validation"
 	};
 
+	VkDebugUtilsMessengerCreateInfoEXT debugInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+		.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+		.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+		.pfnUserCallback = debugCallback
+	};
+
 	VkInstanceCreateInfo instCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.pNext = &debugInfo,
 		.pApplicationInfo = &appInfo,
 		.enabledLayerCount = static_cast<uint32_t>(requestedLayers.size()),
 		.ppEnabledLayerNames = requestedLayers.data(),
-		.enabledExtensionCount = instExtCount,
-		.ppEnabledExtensionNames = extensions
+		.enabledExtensionCount = static_cast<uint32_t>(requestedExtensions.size()),
+		.ppEnabledExtensionNames = requestedExtensions.data()
 	};
 
 	if (vkCreateInstance(&instCreateInfo, nullptr, &vulkanInstance) != VK_SUCCESS)
@@ -1408,6 +1438,19 @@ Renderer::Image Application::createImage(std::vector<unsigned char> imageData, u
 		showError("Error creating image view");
 		return Renderer::Image{};
 	}
-
 	return image;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL Application::debugCallback(
+	VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+	VkDebugUtilsMessageTypeFlagsEXT messageType,
+	const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+	void *pUserData)
+{
+	if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+	{
+		std::cerr << "Validation Layer: " << pCallbackData->pMessage << std::endl;
+	}
+
+	return VK_FALSE;
 }
