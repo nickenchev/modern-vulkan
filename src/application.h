@@ -11,9 +11,9 @@
 
 struct SDL_Window;
 struct VmaAllocator_T;
-typedef struct VmaAllocator_T* VmaAllocator;
+typedef struct VmaAllocator_T *VmaAllocator;
 struct VmaAllocation_T;
-typedef struct VmaAllocation_T* VmaAllocation;
+typedef struct VmaAllocation_T *VmaAllocation;
 
 struct Pipeline
 {
@@ -37,7 +37,7 @@ class Application
 	constexpr static VkFormat swapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT };
 
-	SDL_Window* window = nullptr;
+	SDL_Window *window = nullptr;
 	uint32_t width = 1280;
 	uint32_t height = 720;
 	bool running = false;
@@ -79,6 +79,11 @@ class Application
 	VkSemaphore timelineSemaphore = nullptr;
 	std::array<FrameResources, MaxFramesInFlight> frameResources;
 
+	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+		VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+		VkDebugUtilsMessageTypeFlagsEXT messageType,
+		const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+		void *pUserData);
 	void showError(const std::string &errorMessasge) const;
 
 	bool initializeVulkan();
