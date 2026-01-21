@@ -12,17 +12,6 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/gtc/matrix_transform.hpp>
 
-struct DrawConstants
-{
-	uint64_t vertexBufferAddress = 0;
-	float globalTime = 0;
-	float padding = 0;
-	glm::mat4 mvp;
-};
-
-std::vector<Renderer::Mesh> meshes;
-std::vector<Renderer::Vertex> vertices;
-std::vector<uint32_t> indices;
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -53,6 +42,17 @@ void Application::shutdown()
 {
 	// wait in case resources are in use
 	vkDeviceWaitIdle(device);
+
+	// clean up images
+	for (const Renderer::Image &image : images)
+	{
+		vmaDestroyImage(vmaAllocator, image.handle, image.allocation);
+		vkDestroyImageView(device, image.view, nullptr);
+	}
+	images.clear();
+
+	// single-use command buffer pool
+	vkDestroyCommandPool(device, commandPool, nullptr);
 
 	// destroy allocated buffers
 	vmaDestroyBuffer(vmaAllocator, vertexBuffer.buffer, vertexBuffer.allocation);
@@ -364,7 +364,7 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 	VkPhysicalDeviceVulkan14Features features14
 	{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
-		.pNext = nullptr,
+		.pNext = nullptr
 	};
 	VkPhysicalDeviceVulkan13Features features13
 	{
@@ -759,7 +759,7 @@ Pipeline Application::createGraphicsPipeline() const
 	{
 		.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
 		.offset = 0,
-		.size = sizeof(DrawConstants)
+		.size = sizeof(Renderer::DrawConstants)
 	};
 
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo
@@ -836,6 +836,18 @@ bool Application::createSyncResources()
 
 bool Application::createCommandBuffers()
 {
+	// create a command pool for single use
+	VkCommandPoolCreateInfo poolInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.queueFamilyIndex = gfxQueueFamIdx
+	};
+	if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS)
+	{
+		showError("Unable to create command buffer pool");
+		return false;
+	}
+
 	for (FrameResources &res : frameResources)
 	{
 		// we'll give each frame its own pool, faster cmd buffer resets this way
@@ -1028,7 +1040,6 @@ void Application::render(float deltaTime)
 
 		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
 
-
 		constexpr float fov = glm::radians(45.0);
 		float aspect = static_cast<float>(width) / static_cast<float>(height);
 		float nearP = 0.1f;
@@ -1043,13 +1054,13 @@ void Application::render(float deltaTime)
 
 		// BDA Send Device Pointer
 		VkBufferDeviceAddressInfo vertBdaInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = vertexBuffer.buffer };
-		DrawConstants pushConsts
+		Renderer::DrawConstants pushConsts
 		{
 			.vertexBufferAddress = vkGetBufferDeviceAddress(device, &vertBdaInfo),
 			.globalTime = static_cast<float>(globalTime),
 			.mvp = proj * transform
 		};
-		vkCmdPushConstants(res.commandBuffer, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(DrawConstants), &pushConsts);
+		vkCmdPushConstants(res.commandBuffer, pipeline.layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Renderer::DrawConstants), &pushConsts);
 
 		vkCmdBindIndexBuffer(res.commandBuffer, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 		for (Renderer::Mesh &mesh : meshes)
@@ -1169,6 +1180,22 @@ void Application::loadModel()
 	loader.LoadASCIIFromFile(&model, &err, &warn, "D:/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
 	//loader.LoadASCIIFromFile(&model, &err, &warn, "S:/projects/boiler-3d/data/sorceress/scene.gltf");
 
+	// load images
+	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
+	if (commandBuffer)
+	{
+		for (const Image &image : model.images)
+		{
+			Renderer::Image newImage = createImage(image.image, image.width, image.height, image.component);
+			if (newImage.handle == nullptr)
+			{
+				break;
+			}
+			images.push_back(newImage);
+		}
+	}
+	submitTransientCommandBuffer(commandBuffer);
+
 	// load all meshes first
 	for (const Mesh &mesh : model.meshes)
 	{
@@ -1286,3 +1313,101 @@ void Application::loadModel()
 		sizeof(uint32_t) * indices.size(), indices.data());
 }
 
+VkCommandBuffer Application::startTransientCommandBuffer()
+{
+	// allocate the transient command buffer
+	VkCommandBufferAllocateInfo cmdAllocInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = commandPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+
+	VkCommandBuffer commandBuffer = nullptr;
+	if (vkAllocateCommandBuffers(device, &cmdAllocInfo, &commandBuffer) != VK_SUCCESS)
+	{
+		showError("Unable to allocate command buffer");
+		return nullptr;
+	}
+
+	// begin the command buffer
+	VkCommandBufferBeginInfo beginInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
+	};
+	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+	{
+		showError("Unable to begin command buffer");
+		return nullptr;
+	}
+
+	return commandBuffer;
+}
+
+void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
+{
+	vkEndCommandBuffer(commandBuffer);
+
+	// TODO: Submit on a transfer queue
+	VkSubmitInfo submitInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &commandBuffer
+	};
+
+	vkQueueSubmit(gfxQueue, 1, &submitInfo, nullptr);
+	vkQueueWaitIdle(gfxQueue);
+	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+}
+
+Renderer::Image Application::createImage(std::vector<unsigned char> imageData, uint32_t width, uint32_t height, int components)
+{
+	VkFormat imageFormat = VK_FORMAT_R8G8B8A8_SRGB;
+
+	VkImageCreateInfo imageInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = imageFormat,
+		.extent {.width = width, .height = height, .depth = 1},
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+	};
+	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_CPU_TO_GPU };
+
+	Renderer::Image image;
+	if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &image.handle, &image.allocation, nullptr) != VK_SUCCESS)
+	{
+		showError("Error creating image");
+		return Renderer::Image{};
+	}
+
+	VkImageViewCreateInfo imgViewInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = image.handle,
+		.viewType = VK_IMAGE_VIEW_TYPE_2D,
+		.format = imageFormat,
+		.subresourceRange
+		{
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.levelCount = 1,
+			.layerCount = 1
+		}
+	};
+
+	if (vkCreateImageView(device, &imgViewInfo, nullptr, &image.view) != VK_SUCCESS)
+	{
+		showError("Error creating image view");
+		return Renderer::Image{};
+	}
+
+	return image;
+}

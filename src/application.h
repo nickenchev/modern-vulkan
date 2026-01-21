@@ -40,6 +40,9 @@ namespace Renderer
 
 	struct Image
 	{
+		VkImage handle = nullptr;
+		VkImageView view = nullptr;
+		VmaAllocation allocation = nullptr;
 	};
 
 	struct Vertex
@@ -59,6 +62,14 @@ namespace Renderer
 	struct Mesh
 	{
 		std::vector<SubMesh> subMeshes;
+	};
+
+	struct DrawConstants
+	{
+		uint64_t vertexBufferAddress = 0;
+		float globalTime = 0;
+		float padding = 0;
+		glm::mat4 mvp;
 	};
 }
 
@@ -89,6 +100,7 @@ class Application
 	// queue related
 	uint32_t gfxQueueFamIdx = UINT32_MAX;
 	VkQueue gfxQueue = nullptr;
+	VkCommandPool commandPool = nullptr;
 
 	// swapchain related
 	VkSwapchainKHR swapchain = nullptr;
@@ -114,8 +126,14 @@ class Application
 	VkSemaphore timelineSemaphore = nullptr;
 	std::array<FrameResources, MaxFramesInFlight> frameResources;
 
+	// assets
+	std::vector<Renderer::Mesh> meshes;
+	std::vector<Renderer::Vertex> vertices;
+	std::vector<uint32_t> indices;
 	Renderer::Buffer vertexBuffer;
 	Renderer::Buffer indexBuffer;
+
+	std::vector<Renderer::Image> images;
 
 	void showError(const std::string &errorMessasge) const;
 
@@ -136,6 +154,10 @@ class Application
 	void render(float deltaTime);
 
 	void loadModel();
+
+	VkCommandBuffer startTransientCommandBuffer();
+	void submitTransientCommandBuffer(VkCommandBuffer commandBuffer);
+	Renderer::Image createImage(std::vector<unsigned char> imageData, uint32_t width, uint32_t height, int components);
 
 public:
 	bool initialize();
