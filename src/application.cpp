@@ -439,6 +439,27 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 	swapchainWidth = width;
 	swapchainHeight = height;
 
+	// ensure our swapchain supports the requested format
+	uint32_t formatCount = 0;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data());
+
+	bool formatSupported = false;
+	for (const VkSurfaceFormatKHR &surfFormat : surfaceFormats)
+	{
+		if (surfFormat.format == swapchainFormat)
+		{
+			formatSupported = true;
+			break;
+		}
+	}
+	if (!formatSupported)
+	{
+		showError("Requested swapchain format is not supported by the surface");
+		return false;
+	}
+
 	VkSurfaceCapabilitiesKHR surfaceCaps{};
 	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps) != VK_SUCCESS)
 	{
