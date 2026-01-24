@@ -287,9 +287,7 @@ VkPhysicalDevice Application::findPhysicalDevice()
 	std::vector<VkPhysicalDevice> physicalDevices(physDeviceCount);
 	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, physicalDevices.data());
 
-	// default to the first GPU
 	VkPhysicalDevice physicalDevice = nullptr;
-
 	if (physDeviceCount)
 	{
 		// if you have issues, you can always just hardcode a GPU index while learning
@@ -315,13 +313,13 @@ bool Application::findGraphicsQueue()
 	// grab all of the queue families
 	uint32_t queueFamCount = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, nullptr);
-	std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
+	std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
 	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, queueFamProps.data());
 
 	for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size(); currentFamIdx++)
 	{
 		// ensure it has presentation support
-		VkBool32 hasPresentSupport = false;
+		VkBool32 hasPresentSupport = VK_FALSE;
 		vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, currentFamIdx, surface, &hasPresentSupport);
 
 		const auto &props = queueFamProps[currentFamIdx];
@@ -338,18 +336,7 @@ bool Application::findGraphicsQueue()
 
 bool Application::createDevice(VkPhysicalDevice physicalDevice)
 {
-	float queuePriority = 1.0f;
-	std::vector<uint32_t> queueFamiles{ gfxQueueFamIdx };
-
-	VkDeviceQueueCreateInfo gfxQueueInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = gfxQueueFamIdx,
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriority
-	};
-
-	// query suppoted features
+	// query supported features
 	VkPhysicalDeviceVulkan14Features supportedFeatures14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, .pNext = nullptr };
 	VkPhysicalDeviceVulkan13Features supportedFeatures13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &supportedFeatures14 };
 	VkPhysicalDeviceVulkan12Features supportedFeatures12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &supportedFeatures13 };
@@ -385,7 +372,19 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 	};
 	VkPhysicalDeviceFeatures2 features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &features12 };
 
+	// request the queues we'll be using
+	std::vector<float> queuePriorities{ 1.0f };
+	VkDeviceQueueCreateInfo gfxQueueInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = gfxQueueFamIdx,
+		.queueCount = 1,
+		.pQueuePriorities = queuePriorities.data()
+	};
+
+	// device specific extensions
 	const std::vector<const char *> deviceExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
 	VkDeviceCreateInfo devCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
