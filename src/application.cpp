@@ -988,7 +988,7 @@ void Application::render()
 	};
 	vkCmdPipelineBarrier2(res.commandBuffer, &depInfo);
 
-	// setup the attachments (color and depth) and begin rendering (dynamic)
+	// setup the attachments (color and depth) and begin rendering (dynamic rendering)
 	VkRenderingAttachmentInfo colorAttachInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1056,7 +1056,7 @@ void Application::render()
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
 		.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 		.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_2_NONE, // nothing is waiting, but the cache is flushed and layout is transition
+		.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
 		.dstAccessMask = 0,
 		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
