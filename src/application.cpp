@@ -19,6 +19,8 @@ bool Application::initialize()
 	if (SDL_InitSubSystem(SDL_INIT_VIDEO))
 	{
 		window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+		SDL_SetWindowMinimumSize(window, 320, 200);
+
 		if (!window)
 		{
 			showError("Error creating window");
@@ -863,7 +865,12 @@ void Application::render()
 	{
 		vkDeviceWaitIdle(device);
 		destroySwapchain();
-		createSwapchain(width, height);
+		if (!createSwapchain(width, height))
+		{
+			showError("Unable to recreate the swapchain");
+			running = false;
+			return;
+		}
 		requireSwapchainRecreate = false;
 	}
 
