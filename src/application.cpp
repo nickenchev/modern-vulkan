@@ -8,6 +8,7 @@
 #include <vma/vk_mem_alloc.h>
 
 #include <iostream>
+#include <algorithm>
 
 void Application::showError(const std::string &errorMessage) const
 {
@@ -278,6 +279,7 @@ bool Application::createSurface()
 	{
 		return false;
 	}
+
 	return true;
 }
 
@@ -306,6 +308,28 @@ VkPhysicalDevice Application::findPhysicalDevice()
 			}
 		}
 	}
+
+	// ensure the desired swapchain format is supported
+	uint32_t formatCount = 0;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data());
+
+	bool formatSupported = false;
+	for (const VkSurfaceFormatKHR &surfFormat : surfaceFormats)
+	{
+		if (surfFormat.format == swapchainFormat)
+		{
+			formatSupported = true;
+			break;
+		}
+	}
+	if (!formatSupported)
+	{
+		showError("Requested swapchain format is not supported by the surface");
+		return nullptr;
+	}
+
 	return physicalDevice;
 }
 
@@ -438,30 +462,11 @@ bool Application::initializeVMA()
 
 bool Application::createSwapchain(uint32_t width, uint32_t height)
 {
+	// track swapchain size separate from window size
 	swapchainWidth = width;
 	swapchainHeight = height;
 
-	// ensure our swapchain supports the requested format
-	uint32_t formatCount = 0;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
-	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
-	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data());
-
-	bool formatSupported = false;
-	for (const VkSurfaceFormatKHR &surfFormat : surfaceFormats)
-	{
-		if (surfFormat.format == swapchainFormat)
-		{
-			formatSupported = true;
-			break;
-		}
-	}
-	if (!formatSupported)
-	{
-		showError("Requested swapchain format is not supported by the surface");
-		return false;
-	}
-
+	// ensure we request an appropriate number of images
 	VkSurfaceCapabilitiesKHR surfaceCaps{};
 	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps) != VK_SUCCESS)
 	{
@@ -469,17 +474,23 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		return false;
 	}
 
+	uint32_t requestedImageCount = std::max(2u, surfaceCaps.minImageCount);
+	if (surfaceCaps.maxImageCount > 0)
+	{
+		requestedImageCount = std::min(requestedImageCount, surfaceCaps.maxImageCount);
+	}
+
 	VkSwapchainCreateInfoKHR swapchainCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
-		.minImageCount = surfaceCaps.minImageCount,
+		.minImageCount = requestedImageCount,
 		.imageFormat = swapchainFormat,
 		.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
 		.imageExtent{.width = swapchainWidth, .height = swapchainHeight },
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+		.preTransform = surfaceCaps.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.presentMode = VK_PRESENT_MODE_FIFO_KHR
 	};
@@ -490,7 +501,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		return false;
 	}
 
-	// grab the swapchain images
+	// ask for the swapchain images
 	uint32_t imageCount = 0;
 	vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
 	swapchainImages.resize(imageCount);
