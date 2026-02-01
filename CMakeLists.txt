@@ -6,6 +6,8 @@ find_package(Vulkan REQUIRED COMPONENTS volk shaderc_combined)
 find_package(glm REQUIRED)
 
 set(SOURCE_FILES
+	"src/shaders/shader.vert"
+	"src/shaders/shader.frag"
 	"src/main.cpp"
 	"src/application.h"
 	"src/application.cpp"
