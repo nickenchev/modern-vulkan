@@ -1,12 +1,6 @@
 #include "utils.h"
-
-#include <SDL3/SDL.h>
 #include <fstream>
 #include <sstream>
-
-void showError(SDL_Window *window, const std::string &errorMessasge)
-{
-}
 
 std::string readTextFile(const std::string &filePath)
 {

@@ -5,12 +5,15 @@ find_package(SDL3 REQUIRED)
 find_package(Vulkan REQUIRED COMPONENTS volk shaderc_combined)
 find_package(glm REQUIRED)
 
-add_executable(vulkanapp
+set(SOURCE_FILES
 	"src/main.cpp"
 	"src/application.h"
 	"src/application.cpp"
 	 "src/utils.h"
 	 "src/utils.cpp")
+
+add_executable(vulkanapp ${SOURCE_FILES})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${SOURCE_FILES})
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

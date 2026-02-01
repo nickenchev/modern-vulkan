@@ -520,7 +520,9 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 			.subresourceRange
 			{
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
 				.levelCount = 1,
+				.baseArrayLayer = 0,
 				.layerCount = 1
 			}
 		};
@@ -642,15 +644,16 @@ VkShaderModule Application::createShaderModule(const std::string &fileName, shad
 		std::cerr << "Shader Compilation Error: " << result.GetErrorMessage() << std::endl;
 		return nullptr;
 	}
-	std::vector<uint32_t> spv = { result.cbegin(), result.cend() };
 
+	const size_t shaderSize = (result.cend() - result.cbegin()) * sizeof(uint32_t);
 	// pass spir-v to vulkan and create shader-module
 	VkShaderModuleCreateInfo moduleCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = spv.size() * sizeof(uint32_t),
-		.pCode = spv.data()
+		.codeSize = shaderSize,
+		.pCode = result.cbegin()
 	};
+
 	VkShaderModule shaderModule = nullptr;
 	if (vkCreateShaderModule(device, &moduleCreateInfo, nullptr, &shaderModule) != VK_SUCCESS)
 	{
@@ -1091,14 +1094,6 @@ void Application::render()
 
 	vkEndCommandBuffer(res.commandBuffer);
 
-	// ensure swapchain image is actually vailable to start color output
-	VkSemaphoreSubmitInfo imageAcquireWaitInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = imageAcquireSemaphore,
-		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | // wait before drawing to image
-			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT // prevent depth buffer clearing before image is ready
-	};
 	// signal that the image can be presented
 	std::vector<VkSemaphoreSubmitInfo> semaphoreSignals
 	{
@@ -1119,6 +1114,16 @@ void Application::render()
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
 		.commandBuffer = res.commandBuffer,
 	};
+
+	// ensure swapchain image is actually vailable to start color output
+	VkSemaphoreSubmitInfo imageAcquireWaitInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = imageAcquireSemaphore,
+		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | // wait before drawing to image
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT // prevent depth buffer clearing before image is ready
+	};
+
 	VkSubmitInfo2 submitInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
