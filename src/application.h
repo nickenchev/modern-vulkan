@@ -135,6 +135,11 @@ class Application
 
 	std::vector<Renderer::Image> images;
 
+	static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+		VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+		VkDebugUtilsMessageTypeFlagsEXT messageType,
+		const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+		void *pUserData);
 	void showError(const std::string &errorMessasge) const;
 
 	bool initializeVulkan();

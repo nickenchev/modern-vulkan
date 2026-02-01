@@ -1,5 +1,7 @@
 
 out/
 build/
+build-vs/
 .vs/
 CMakeSettings.json
+/CMakeUserPresets.json

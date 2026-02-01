@@ -11,25 +11,35 @@
 #include <tiny_gltf.h>
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 
 void Application::showError(const std::string &errorMessasge) const
 {
-	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessasge.c_str(), window);
+	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessage.c_str(), window);
 }
 
 bool Application::initialize()
 {
-	SDL_InitSubSystem(SDL_INIT_VIDEO);
-	window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-	if (!window)
+	if (SDL_InitSubSystem(SDL_INIT_VIDEO))
 	{
-		showError("Error creating window");
-		return false;
-	}
+		window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+		SDL_SetWindowMinimumSize(window, 320, 200);
 
-	if (!initializeVulkan())
+		if (!window)
+		{
+			showError("Error creating window");
+			return false;
+		}
+
+		if (!initializeVulkan())
+		{
+			return false;
+		}
+	}
+	else
 	{
+		showError("Unable to initialize SDL3");
 		return false;
 	}
 
@@ -239,22 +249,45 @@ bool Application::createVulkanInstance()
 		.apiVersion = VulkanVersion,
 	};
 
+	// find the required extensions for the platform and add debug for ourselves
 	uint32_t instExtCount = 0;
 	const char *const *extensions = SDL_Vulkan_GetInstanceExtensions(&instExtCount);
+	std::vector<const char *> requestedExtensions
+	{
+		VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+	};
+	for (int i = 0; i < instExtCount; ++i)
+	{
+		requestedExtensions.push_back(extensions[i]);
+	}
 
+
+	// we'll also need to enable the validation layer for error checking and reporting
 	std::vector<const char *> requestedLayers
 	{
 		"VK_LAYER_KHRONOS_validation"
 	};
 
+	VkDebugUtilsMessengerCreateInfoEXT debugInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+		.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+		.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+			VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+		.pfnUserCallback = debugCallback
+	};
+
 	VkInstanceCreateInfo instCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.pNext = &debugInfo,
 		.pApplicationInfo = &appInfo,
 		.enabledLayerCount = static_cast<uint32_t>(requestedLayers.size()),
 		.ppEnabledLayerNames = requestedLayers.data(),
-		.enabledExtensionCount = instExtCount,
-		.ppEnabledExtensionNames = extensions
+		.enabledExtensionCount = static_cast<uint32_t>(requestedExtensions.size()),
+		.ppEnabledExtensionNames = requestedExtensions.data()
 	};
 
 	if (vkCreateInstance(&instCreateInfo, nullptr, &vulkanInstance) != VK_SUCCESS)
@@ -272,6 +305,7 @@ bool Application::createSurface()
 	{
 		return false;
 	}
+
 	return true;
 }
 
@@ -283,9 +317,7 @@ VkPhysicalDevice Application::findPhysicalDevice()
 	std::vector<VkPhysicalDevice> physicalDevices(physDeviceCount);
 	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, physicalDevices.data());
 
-	// default to the first GPU
 	VkPhysicalDevice physicalDevice = nullptr;
-
 	if (physDeviceCount)
 	{
 		// if you have issues, you can always just hardcode a GPU index while learning
@@ -302,6 +334,28 @@ VkPhysicalDevice Application::findPhysicalDevice()
 			}
 		}
 	}
+
+	// ensure the desired swapchain format is supported
+	uint32_t formatCount = 0;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data());
+
+	bool formatSupported = false;
+	for (const VkSurfaceFormatKHR &surfFormat : surfaceFormats)
+	{
+		if (surfFormat.format == swapchainFormat)
+		{
+			formatSupported = true;
+			break;
+		}
+	}
+	if (!formatSupported)
+	{
+		showError("Requested swapchain format is not supported by the surface");
+		return nullptr;
+	}
+
 	return physicalDevice;
 }
 
@@ -311,13 +365,13 @@ bool Application::findGraphicsQueue()
 	// grab all of the queue families
 	uint32_t queueFamCount = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, nullptr);
-	std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
+	std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
 	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, queueFamProps.data());
 
 	for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size(); currentFamIdx++)
 	{
 		// ensure it has presentation support
-		VkBool32 hasPresentSupport = false;
+		VkBool32 hasPresentSupport = VK_FALSE;
 		vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, currentFamIdx, surface, &hasPresentSupport);
 
 		const auto &props = queueFamProps[currentFamIdx];
@@ -334,18 +388,7 @@ bool Application::findGraphicsQueue()
 
 bool Application::createDevice(VkPhysicalDevice physicalDevice)
 {
-	float queuePriority = 1.0f;
-	std::vector<uint32_t> queueFamiles{ gfxQueueFamIdx };
-
-	VkDeviceQueueCreateInfo gfxQueueInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = gfxQueueFamIdx,
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriority
-	};
-
-	// query suppoted features
+	// query supported features
 	VkPhysicalDeviceVulkan14Features supportedFeatures14{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, .pNext = nullptr };
 	VkPhysicalDeviceVulkan13Features supportedFeatures13{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = &supportedFeatures14 };
 	VkPhysicalDeviceVulkan12Features supportedFeatures12{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = &supportedFeatures13 };
@@ -387,7 +430,19 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 		.features {.shaderInt64 = VK_TRUE }
 	};
 
+	// request the queues we'll be using
+	std::vector<float> queuePriorities{ 1.0f };
+	VkDeviceQueueCreateInfo gfxQueueInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = gfxQueueFamIdx,
+		.queueCount = 1,
+		.pQueuePriorities = queuePriorities.data()
+	};
+
+	// device specific extensions
 	const std::vector<const char *> deviceExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
 	VkDeviceCreateInfo devCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -439,9 +494,11 @@ bool Application::initializeVMA()
 
 bool Application::createSwapchain(uint32_t width, uint32_t height)
 {
+	// track swapchain size separate from window size
 	swapchainWidth = width;
 	swapchainHeight = height;
 
+	// ensure we request an appropriate number of images
 	VkSurfaceCapabilitiesKHR surfaceCaps{};
 	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps) != VK_SUCCESS)
 	{
@@ -449,17 +506,23 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		return false;
 	}
 
+	uint32_t requestedImageCount = std::max(2u, surfaceCaps.minImageCount);
+	if (surfaceCaps.maxImageCount > 0)
+	{
+		requestedImageCount = std::min(requestedImageCount, surfaceCaps.maxImageCount);
+	}
+
 	VkSwapchainCreateInfoKHR swapchainCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
-		.minImageCount = surfaceCaps.minImageCount,
+		.minImageCount = requestedImageCount,
 		.imageFormat = swapchainFormat,
 		.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
 		.imageExtent{.width = swapchainWidth, .height = swapchainHeight },
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+		.preTransform = surfaceCaps.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 		.presentMode = VK_PRESENT_MODE_FIFO_KHR
 	};
@@ -470,7 +533,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		return false;
 	}
 
-	// grab the swapchain images
+	// ask for the swapchain images
 	uint32_t imageCount = 0;
 	vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
 	swapchainImages.resize(imageCount);
@@ -489,7 +552,9 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 			.subresourceRange
 			{
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.baseMipLevel = 0,
 				.levelCount = 1,
+				.baseArrayLayer = 0,
 				.layerCount = 1
 			}
 		};
@@ -611,15 +676,16 @@ VkShaderModule Application::createShaderModule(const std::string &fileName, shad
 		std::cerr << "Shader Compilation Error: " << result.GetErrorMessage() << std::endl;
 		return nullptr;
 	}
-	std::vector<uint32_t> spv = { result.cbegin(), result.cend() };
 
+	const size_t shaderSize = (result.cend() - result.cbegin()) * sizeof(uint32_t);
 	// pass spir-v to vulkan and create shader-module
 	VkShaderModuleCreateInfo moduleCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = spv.size() * sizeof(uint32_t),
-		.pCode = spv.data()
+		.codeSize = shaderSize,
+		.pCode = result.cbegin()
 	};
+
 	VkShaderModule shaderModule = nullptr;
 	if (vkCreateShaderModule(device, &moduleCreateInfo, nullptr, &shaderModule) != VK_SUCCESS)
 	{
@@ -887,7 +953,12 @@ void Application::render(float deltaTime)
 	{
 		vkDeviceWaitIdle(device);
 		destroySwapchain();
-		createSwapchain(width, height);
+		if (!createSwapchain(width, height))
+		{
+			showError("Unable to recreate the swapchain");
+			running = false;
+			return;
+		}
 		requireSwapchainRecreate = false;
 	}
 
@@ -984,7 +1055,7 @@ void Application::render(float deltaTime)
 	};
 	vkCmdPipelineBarrier2(res.commandBuffer, &depInfo);
 
-	// setup the attachments (color and depth) and begin rendering (dynamic)
+	// setup the attachments (color and depth) and begin rendering (dynamic rendering)
 	VkRenderingAttachmentInfo colorAttachInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1080,7 +1151,7 @@ void Application::render(float deltaTime)
 		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
 		.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
 		.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_2_NONE, // nothing is waiting, but the cache is flushed and layout is transition
+		.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
 		.dstAccessMask = 0,
 		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -1104,14 +1175,6 @@ void Application::render(float deltaTime)
 
 	vkEndCommandBuffer(res.commandBuffer);
 
-	// ensure swapchain image is actually vailable to start color output
-	VkSemaphoreSubmitInfo imageAcquireWaitInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-		.semaphore = imageAcquireSemaphore,
-		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | // wait before drawing to image
-			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT // prevent depth buffer clearing before image is ready
-	};
 	// signal that the image can be presented
 	std::vector<VkSemaphoreSubmitInfo> semaphoreSignals
 	{
@@ -1132,6 +1195,16 @@ void Application::render(float deltaTime)
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
 		.commandBuffer = res.commandBuffer,
 	};
+
+	// ensure swapchain image is actually vailable to start color output
+	VkSemaphoreSubmitInfo imageAcquireWaitInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+		.semaphore = imageAcquireSemaphore,
+		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | // wait before drawing to image
+			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT // prevent depth buffer clearing before image is ready
+	};
+
 	VkSubmitInfo2 submitInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
@@ -1410,4 +1483,18 @@ Renderer::Image Application::createImage(std::vector<unsigned char> imageData, u
 	}
 
 	return image;
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL Application::debugCallback(
+	VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+	VkDebugUtilsMessageTypeFlagsEXT messageType,
+	const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData,
+	void *pUserData)
+{
+	if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+	{
+		std::cerr << "Validation Layer: " << pCallbackData->pMessage << std::endl;
+	}
+
+	return VK_FALSE;
 }
