@@ -15,12 +15,6 @@ typedef struct VmaAllocator_T* VmaAllocator;
 struct VmaAllocation_T;
 typedef struct VmaAllocation_T* VmaAllocation;
 
-struct Pipeline
-{
-	VkPipelineLayout layout = nullptr;
-	VkPipeline handle = nullptr;
-};
-
 struct FrameResources
 {
 	uint32_t lastFrameId = 0;
@@ -69,7 +63,8 @@ class Application
 	VmaAllocation depthImageAllocation = nullptr;
 
 	// graphics pipeline related
-	Pipeline pipeline;
+	VkPipelineLayout pipelineLayout = nullptr;
+	VkPipeline pipeline = nullptr;
 
 	// shader resources
 	VkShaderModule vertShader = nullptr;
@@ -92,7 +87,7 @@ class Application
 	void destroySwapchain();
 	VkShaderModule createShaderModule(const std::string &fileName, shaderc_shader_kind kind) const;
 	bool createShaders();
-	Pipeline createGraphicsPipeline() const;
+	VkPipeline createGraphicsPipeline();
 	bool createSyncResources();
 	bool createCommandBuffers();
 	void render();

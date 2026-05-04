@@ -49,13 +49,13 @@ void Application::shutdown()
 	}
 
 	// pipeline cleanup
-	if (pipeline.layout)
+	if (pipelineLayout)
 	{
-		vkDestroyPipelineLayout(device, pipeline.layout, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 	}
-	if (pipeline.handle)
+	if (pipeline)
 	{
-		vkDestroyPipeline(device, pipeline.handle, nullptr);
+		vkDestroyPipeline(device, pipeline, nullptr);
 	}
 
 	// cleanup shaders
@@ -175,7 +175,7 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
-	if (pipeline = createGraphicsPipeline(); !pipeline.handle)
+	if (pipeline = createGraphicsPipeline(); !pipeline)
 	{
 		showError("Unable to initialize the graphics pipeline");
 		return false;
@@ -611,8 +611,21 @@ bool Application::createShaders()
 	return true;
 }
 
-Pipeline Application::createGraphicsPipeline() const
+VkPipeline Application::createGraphicsPipeline()
 {
+	// need to define a pipeline layout
+	VkPipelineLayoutCreateInfo pipelineLayoutInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 0,
+		.pushConstantRangeCount = 0
+	};
+	if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+	{
+		showError("Unable to create the pipeline layout");
+		return nullptr;
+	}
+
 	// configure the shader stages struct
 	const char *entryPoint = "main";
 	std::vector<VkPipelineShaderStageCreateInfo> shaderStages
@@ -671,8 +684,8 @@ Pipeline Application::createGraphicsPipeline() const
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.cullMode = VK_CULL_MODE_BACK_BIT,
-		.frontFace = VK_FRONT_FACE_CLOCKWISE,
-		.lineWidth = 1.0f
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+		.lineWidth = 1.0f,
 	};
 
 	// No multisampling
@@ -719,21 +732,6 @@ Pipeline Application::createGraphicsPipeline() const
 	};
 
 	// Create the graphics pipeline
-	Pipeline pipeline;
-
-	// need to define a pipeline layout
-	VkPipelineLayoutCreateInfo pipelineLayoutInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = 0,
-		.pushConstantRangeCount = 0
-	};
-	if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipeline.layout) != VK_SUCCESS)
-	{
-		showError("Unable to create the pipeline layout");
-		return Pipeline{};
-	}
-
 	VkGraphicsPipelineCreateInfo pipelineInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -748,13 +746,13 @@ Pipeline Application::createGraphicsPipeline() const
 		.pDepthStencilState = &depthStencilInfo,
 		.pColorBlendState = &blendInfo,
 		.pDynamicState = &dynamicStateInfo,
-		.layout = pipeline.layout,
+		.layout = pipelineLayout,
 		.renderPass = VK_NULL_HANDLE,
 	};
-	if (vkCreateGraphicsPipelines(device, nullptr, 1, &pipelineInfo, nullptr, &pipeline.handle) != VK_SUCCESS)
+	if (vkCreateGraphicsPipelines(device, nullptr, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
 	{
 		showError("Error creating the pipeline");
-		return Pipeline{};
+		return nullptr;
 	}
 	return pipeline;
 }
@@ -982,10 +980,9 @@ void Application::render()
 			.extent{.width = swapchainWidth, .height = swapchainHeight}
 		};
 		vkCmdSetScissor(res.commandBuffer, 0, 1, &scissor);
-
-		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle);
-
+		
 		// draw our triangle
+		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 		vkCmdDraw(res.commandBuffer, 3, 1, 0, 0);
 	}
 	// end dynamic rendering
