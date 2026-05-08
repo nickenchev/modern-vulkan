@@ -17,11 +17,9 @@ typedef struct VmaAllocation_T* VmaAllocation;
 
 struct FrameResources
 {
-	uint32_t lastFrameId = 0;
 	VkCommandPool commandPool = nullptr;
 	VkCommandBuffer commandBuffer = nullptr;
 	VkSemaphore imageAcquiredSemaphore = nullptr;
-	VkSemaphore workCompleteSemaphore = nullptr;
 };
 
 class Application
@@ -35,8 +33,8 @@ class Application
 	uint32_t width = 1280;
 	uint32_t height = 720;
 	bool running = false;
-	uint64_t frameCounter = 0;
-	uint64_t timelineValue = MaxFramesInFlight - 1; // subtract 1 to ensure wait-for-ID / frame resource index start at 0 during render, avoids if (frameId < MaxFramesInFlight) check
+        uint64_t frameCounter = 0;
+        uint64_t nextSignalValue = MaxFramesInFlight; // start this way to avoid branchin in render()
 
 	// vulkan core
 	VkInstance vulkanInstance = nullptr;

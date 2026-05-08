@@ -763,7 +763,7 @@ bool Application::createSyncResources()
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
 		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = timelineValue
+		.initialValue = 0
 	};
 	VkSemaphoreCreateInfo semaphoreInfo
 	{
@@ -837,16 +837,15 @@ void Application::render()
 	}
 
 	const uint32_t frameResIndex = frameCounter % MaxFramesInFlight;
-	// wait for frame using this frame's resources to complete
-	uint64_t frameId = ++timelineValue; // this is our frame "ID", and what we're using to signal the end of this frame later
-	uint64_t waitForId = frameId - MaxFramesInFlight; // frame N and frame N - MaxInFlight share resources (3 - 2 = 1 -- frame 3 and 1 share resources)
+	const uint64_t waitForValue = nextSignalValue - MaxFramesInFlight;
+	const uint64_t signalValue = nextSignalValue++;
 
 	VkSemaphoreWaitInfo waitInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
 		.semaphoreCount = 1,
 		.pSemaphores = &timelineSemaphore,
-		.pValues = &waitForId
+		.pValues = &waitForValue
 	};
 	vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
 
@@ -1037,7 +1036,7 @@ void Application::render()
 		{ // entire frame is completed (timeline)
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 			.semaphore = timelineSemaphore,
-			.value = frameId, // we're signalling our current frame ID is complete
+			.value = signalValue,
 			.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
 		}
 	};
