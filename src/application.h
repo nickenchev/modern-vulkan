@@ -34,7 +34,7 @@ class Application
 	uint32_t height = 720;
 	bool running = false;
         uint64_t frameCounter = 0;
-        uint64_t nextSignalValue = MaxFramesInFlight; // start this way to avoid branchin in render()
+        uint64_t nextSignalValue = MaxFramesInFlight + 1;
 
 	// vulkan core
 	VkInstance vulkanInstance = nullptr;

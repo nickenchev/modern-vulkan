@@ -763,7 +763,7 @@ bool Application::createSyncResources()
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
 		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-		.initialValue = 0
+		.initialValue = MaxFramesInFlight
 	};
 	VkSemaphoreCreateInfo semaphoreInfo
 	{
@@ -837,21 +837,23 @@ void Application::render()
 	}
 
 	const uint32_t frameResIndex = frameCounter % MaxFramesInFlight;
-	const uint64_t waitForValue = nextSignalValue - MaxFramesInFlight;
 	const uint64_t signalValue = nextSignalValue++;
+	const uint64_t waitValue = signalValue - MaxFramesInFlight;
 
 	VkSemaphoreWaitInfo waitInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
 		.semaphoreCount = 1,
 		.pSemaphores = &timelineSemaphore,
-		.pValues = &waitForValue
+		.pValues = &waitValue
 	};
 	vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
 
+	printf("%d, %lld, %lld\n", frameResIndex, waitValue, signalValue);
+
 	// now its safe to start recording commands
 	FrameResources &res = frameResources[frameResIndex];
-	vkResetCommandPool(device, res.commandPool, 0); // resets all buffers
+	vkResetCommandPool(device, res.commandPool, 0);
 
 	// get the resources for this frame
 	VkSemaphore imageAcquireSemaphore = frameResources[frameResIndex].imageAcquiredSemaphore;
