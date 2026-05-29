@@ -836,7 +836,7 @@ void Application::render()
 		requireSwapchainRecreate = false;
 	}
 
-	const uint32_t frameResIndex = frameCounter % MaxFramesInFlight;
+	const uint32_t frameResIndex = frameIndex++ % MaxFramesInFlight;
 	const uint64_t signalValue = nextSignalValue++;
 	const uint64_t waitValue = signalValue - MaxFramesInFlight;
 
@@ -849,8 +849,6 @@ void Application::render()
 	};
 	vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
 
-	printf("%d, %lld, %lld\n", frameResIndex, waitValue, signalValue);
-
 	// now its safe to start recording commands
 	FrameResources &res = frameResources[frameResIndex];
 	vkResetCommandPool(device, res.commandPool, 0);
@@ -858,11 +856,10 @@ void Application::render()
 	// get the resources for this frame
 	VkSemaphore imageAcquireSemaphore = frameResources[frameResIndex].imageAcquiredSemaphore;
 
-	// acquire the swapchain image, no need to wait for timeline semaphore just to then wait for the swapchain image
 	uint32_t imageIndex = 0;
 	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAcquireSemaphore, VK_NULL_HANDLE, &imageIndex);
-	// handle resize and out-of-date images, may need swapchain recreate
 
+	// handle resize and out-of-date images, may need swapchain recreate
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
 	{
 		requireSwapchainRecreate = true;
@@ -1024,8 +1021,7 @@ void Application::render()
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 		.semaphore = imageAcquireSemaphore,
-		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | // wait before drawing to image
-			VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT // prevent depth buffer clearing before image is ready
+		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT // wait before drawing to image
 	};
 	// signal that the image can be presented
 	std::vector<VkSemaphoreSubmitInfo> semaphoreSignals
@@ -1071,6 +1067,5 @@ void Application::render()
 	};
 
 	vkQueuePresentKHR(gfxQueue, &presentInfo);
-	frameCounter++;
 }
 

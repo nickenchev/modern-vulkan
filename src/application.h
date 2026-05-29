@@ -33,8 +33,8 @@ class Application
 	uint32_t width = 1280;
 	uint32_t height = 720;
 	bool running = false;
-        uint64_t frameCounter = 0;
-        uint64_t nextSignalValue = MaxFramesInFlight + 1;
+    uint64_t frameIndex = 0;
+    uint64_t nextSignalValue = MaxFramesInFlight + 1;
 
 	// vulkan core
 	VkInstance vulkanInstance = nullptr;
