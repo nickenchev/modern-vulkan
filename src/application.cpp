@@ -257,9 +257,7 @@ VkPhysicalDevice Application::findPhysicalDevice()
 	std::vector<VkPhysicalDevice> physicalDevices(physDeviceCount);
 	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, physicalDevices.data());
 
-	// default to the first GPU
 	VkPhysicalDevice physicalDevice = nullptr;
-
 	if (physDeviceCount)
 	{
 		// if you have issues, you can always just hardcode a GPU index while learning
@@ -276,6 +274,28 @@ VkPhysicalDevice Application::findPhysicalDevice()
 			}
 		}
 	}
+
+	// ensure the desired swapchain format is supported
+	uint32_t formatCount = 0;
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data());
+
+	bool formatSupported = false;
+	for (const VkSurfaceFormatKHR &surfFormat : surfaceFormats)
+	{
+		if (surfFormat.format == swapchainFormat)
+		{
+			formatSupported = true;
+			break;
+		}
+	}
+	if (!formatSupported)
+	{
+		showError("Requested swapchain format is not supported by the surface");
+		return nullptr;
+	}
+
 	return physicalDevice;
 }
 
@@ -978,7 +998,7 @@ void Application::render()
 			.extent{.width = swapchainWidth, .height = swapchainHeight}
 		};
 		vkCmdSetScissor(res.commandBuffer, 0, 1, &scissor);
-		
+
 		// draw our triangle
 		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 		vkCmdDraw(res.commandBuffer, 3, 1, 0, 0);
