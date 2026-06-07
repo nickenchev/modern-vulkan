@@ -10,7 +10,12 @@ add_executable(vulkanapp
 	"src/application.h"
 	"src/application.cpp"
 	 "src/utils.h"
-	 "src/utils.cpp")
+	 "src/utils.cpp"
+	 "src/ext/tiny_gltf_v3.h"
+	 "src/ext/tinygltf_json.h"
+	 "src/ext/tinygltf.cpp"
+	 "src/gltfloader.h"
+	 "src/gltfloader.cpp" "src/resources.h")
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,4 +31,6 @@ target_link_libraries(vulkanapp PRIVATE
 	Vulkan::shaderc_combined
 	SDL3::SDL3
 	glm::glm)
+
+target_include_directories(vulkanapp PRIVATE "src/ext/")
 

@@ -8,6 +8,7 @@
 #include <vma/vk_mem_alloc.h>
 
 #include <iostream>
+#include "gltfloader.h"
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -26,6 +27,19 @@ bool Application::initialize()
 
 	if (!initializeVulkan())
 	{
+		return false;
+	}
+
+	return true;
+}
+
+bool Application::loadData()
+{
+	std::string filename = "D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf";
+	ImportedResources importResult = importModel(filename);
+	if (!importResult.success)
+	{
+		showError("Failed to load model data");
 		return false;
 	}
 
@@ -1089,3 +1103,147 @@ void Application::render()
 	vkQueuePresentKHR(gfxQueue, &presentInfo);
 }
 
+//void Application::loadModel()
+//{
+//	using namespace tinygltf;
+//	Model model;
+//	TinyGLTF loader;
+//
+//	std::string err;
+//	std::string warn;
+//	//loader.LoadASCIIFromFile(&model, &err, &warn, "C:/Users/nikol/Desktop/untitled.gltf");
+//	loader.LoadASCIIFromFile(&model, &err, &warn, "D:/glTF-Sample-Models/2.0/FlightHelmet/glTF/FlightHelmet.gltf");
+//	//loader.LoadASCIIFromFile(&model, &err, &warn, "S:/projects/boiler-3d/data/sorceress/scene.gltf");
+//
+//	// load images
+//	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
+//	if (commandBuffer)
+//	{
+//		for (const Image &image : model.images)
+//		{
+//			Renderer::Image newImage = createImage(image.image, image.width, image.height, image.component);
+//			if (newImage.handle == nullptr)
+//			{
+//				break;
+//			}
+//			images.push_back(newImage);
+//		}
+//	}
+//	submitTransientCommandBuffer(commandBuffer);
+//
+//	// load all meshes first
+//	for (const Mesh &mesh : model.meshes)
+//	{
+//		Renderer::Mesh newMesh;
+//		for (const Primitive &primitive : mesh.primitives)
+//		{
+//			Renderer::SubMesh subMesh;
+//			subMesh.vertexStart = vertices.size();
+//			subMesh.indexStart = indices.size();
+//
+//			// load primitive vertices into sub-mesh
+//			if (const auto &itr = primitive.attributes.find("POSITION"); itr != primitive.attributes.end())
+//			{
+//				const auto &[name, index] = *itr;
+//				const Accessor &access = model.accessors[index];
+//				const BufferView &bv = model.bufferViews[access.bufferView];
+//				const tinygltf::Buffer &buffer = model.buffers[bv.buffer];
+//
+//				if (access.type == TINYGLTF_TYPE_VEC3)
+//				{
+//					for (int i = 0; i < access.count; ++i)
+//					{
+//						size_t offset = bv.byteOffset + access.byteOffset + i * ((bv.byteStride > 0) ? bv.byteStride : sizeof(glm::vec3));
+//						const glm::vec3 *pos = reinterpret_cast<const glm::vec3 *>(buffer.data.data() + offset);
+//						vertices.push_back(Renderer::Vertex{ .position = *pos });
+//						subMesh.vertexCount++;
+//					}
+//				}
+//			}
+//			// load primitive vertices into sub-mesh
+//			if (const auto &itr = primitive.attributes.find("TEXCOORD_0"); itr != primitive.attributes.end())
+//			{
+//				const auto &[name, index] = *itr;
+//				const Accessor &access = model.accessors[index];
+//				const BufferView &bv = model.bufferViews[access.bufferView];
+//				const tinygltf::Buffer &buffer = model.buffers[bv.buffer];
+//
+//				if (access.type == TINYGLTF_TYPE_VEC2)
+//				{
+//					for (int i = 0; i < access.count; ++i)
+//					{
+//						size_t offset = bv.byteOffset + access.byteOffset + i * ((bv.byteStride > 0) ? bv.byteStride : sizeof(glm::vec2));
+//						const glm::vec2 *uv = reinterpret_cast<const glm::vec2 *>(buffer.data.data() + offset);
+//						vertices[subMesh.vertexStart + i].uv = *uv;
+//					}
+//				}
+//			}
+//			// indices
+//			if (primitive.indices != -1)
+//			{
+//				const Accessor &access = model.accessors[primitive.indices];
+//				const BufferView &bv = model.bufferViews[access.bufferView];
+//				const tinygltf::Buffer &buffer = model.buffers[bv.buffer];
+//				subMesh.indexCount = access.count;
+//
+//				if (access.type == TINYGLTF_TYPE_SCALAR && access.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT)
+//				{
+//					for (int i = 0; i < access.count; ++i)
+//					{
+//						const uint32_t *idx = reinterpret_cast<const uint32_t *>(buffer.data.data() + bv.byteOffset + access.byteOffset) + i;
+//						indices.push_back(*idx);
+//					}
+//				}
+//				else if (access.type == TINYGLTF_TYPE_SCALAR && access.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT)
+//				{
+//					for (int i = 0; i < access.count; ++i)
+//					{
+//						const uint16_t *idx = reinterpret_cast<const uint16_t *>(buffer.data.data() + bv.byteOffset + access.byteOffset) + i;
+//						indices.push_back(*idx);
+//					}
+//				}
+//			}
+//			newMesh.subMeshes.push_back(subMesh);
+//		}
+//		meshes.push_back(newMesh);
+//	}
+//
+//	auto createBuffer = [](VmaAllocator &vmaAllocator, VkBufferUsageFlags usage, size_t byteSize, void *initData)
+//	{
+//		VkBufferCreateInfo buffInfo
+//		{
+//			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+//			.size = byteSize,
+//			.usage = usage,
+//			.sharingMode = VK_SHARING_MODE_EXCLUSIVE
+//		};
+//
+//		VmaAllocationCreateInfo allocInfo
+//		{
+//			.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_ALLOW_TRANSFER_INSTEAD_BIT,
+//			.usage = VMA_MEMORY_USAGE_CPU_TO_GPU
+//		};
+//
+//		Renderer::Buffer newBuff;
+//		if (vmaCreateBuffer(vmaAllocator, &buffInfo, &allocInfo, &newBuff.buffer, &newBuff.allocation, nullptr) != VK_SUCCESS)
+//		{
+//			//showError("Error allocating buffer");
+//		}
+//
+//		void *buffPtr = nullptr;
+//		if (vmaMapMemory(vmaAllocator, newBuff.allocation, &buffPtr) != VK_SUCCESS)
+//		{
+//			//showError("Unable to map buffer memory");
+//		}
+//		std::memcpy(static_cast<char *>(buffPtr), initData, buffInfo.size);
+//		const glm::vec3 *vec3Ptr = reinterpret_cast<const glm::vec3 *>(buffPtr);
+//		vmaUnmapMemory(vmaAllocator, newBuff.allocation);
+//
+//		return newBuff;
+//	};
+//
+//	vertexBuffer = createBuffer(vmaAllocator, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+//		sizeof(Renderer::Vertex) * vertices.size(), vertices.data());
+//	indexBuffer = createBuffer(vmaAllocator, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+//		sizeof(uint32_t) * indices.size(), indices.data());
+//}

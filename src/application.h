@@ -6,8 +6,8 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <array>
-#include <string>
 #include <shaderc/shaderc.hpp>
+#include <glm/glm.hpp>
 
 struct SDL_Window;
 struct VmaAllocator_T;
@@ -92,6 +92,7 @@ class Application
 
 public:
 	bool initialize();
+	bool loadData();
 	void shutdown();
 	void run();
 };
