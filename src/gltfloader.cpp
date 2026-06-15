@@ -4,21 +4,22 @@
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <stb_image.h>
-#include "resources.h"
 
-void importModel(const std::string &filePath)
+#include "resources.h"
+#include "nodeworld.h"
+
+bool parseModel(const std::string &filePath, tg3_model &model)
 {
 	std::filesystem::path path(filePath);
 
 	// open the gltf file
 	tg3_parse_options opts;
 	tg3_error_stack errors;
-	tg3_model model;
 
 	if (!std::filesystem::exists(path))
 	{
 		std::print("File doesn't exist: {}\n", filePath);
-		return;
+		return false;
 	}
 
 	tg3_parse_options_init(&opts);
@@ -31,61 +32,74 @@ void importModel(const std::string &filePath)
 		{
 			std::print("{}\n", errors.entries[i].message);
 		}
-		return;
+		return false;
 	}
 	tg3_error_stack_free(&errors);
+	return true;
+}
+
+bool importResources(const std::string &filePath, const tg3_model &model, ImportedResources &resources)
+{
+	std::filesystem::path path(filePath);
 
 	// import source textures
-	std::vector<Image> images(model.images_count);
+	resources.images.resize(model.images_count);
 	for (int i = 0; i < model.images_count; ++i)
 	{
+		Image &img = resources.images[i];
 		std::filesystem::path imagePath = path.parent_path() / model.images[i].uri.data;
-		stbi_load(imagePath.string().c_str(), &images[i].width, &images[i].height, &images[i].channels, 4);
+		img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
 	}
 
 	// import materials
-	std::vector<Material> materials(model.materials_count);
+	resources.materials.resize(model.materials_count);
 	for (int i = 0; i < model.materials_count; ++i)
 	{
-		const tg3_material *mat = &model.materials[i];
-		materials[i].baseColor = glm::vec4(
-			mat->pbr_metallic_roughness.base_color_factor[0],
-			mat->pbr_metallic_roughness.base_color_factor[1],
-			mat->pbr_metallic_roughness.base_color_factor[2],
-			mat->pbr_metallic_roughness.base_color_factor[3]);
+		Material &mat = resources.materials[i];
+		const tg3_material *tg3mat = &model.materials[i];
+		mat.baseColor = glm::vec4(
+			tg3mat->pbr_metallic_roughness.base_color_factor[0],
+			tg3mat->pbr_metallic_roughness.base_color_factor[1],
+			tg3mat->pbr_metallic_roughness.base_color_factor[2],
+			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
 
 		// check for a albedo texture map
-		if (mat->pbr_metallic_roughness.base_color_texture.index != -1)
+		if (tg3mat->pbr_metallic_roughness.base_color_texture.index != -1)
 		{
-			const tg3_texture *tex = &model.textures[mat->pbr_metallic_roughness.base_color_texture.index];
+			const tg3_texture *tex = &model.textures[tg3mat->pbr_metallic_roughness.base_color_texture.index];
+			mat.baseColorTextureIndex = tex->source; // source is an index into the gltf images list
 		}
 	}
 
 	// import meshes
-	std::vector<Mesh> meshes(model.meshes_count);
+	resources.meshes.resize(model.meshes_count);
 	size_t totalVertices = 0;
 	size_t totalIndices = 0;
 
+	// total primitive count for geo buffers
 	uint32_t totalPrimitives = 0;
 	for (int i = 0; i < model.meshes_count; ++i)
 	{
 		totalPrimitives += model.meshes[i].primitives_count;
 	}
 	std::vector<std::pair<std::vector<Vertex>, std::vector<uint32_t>>> primitiveData(totalPrimitives);
+	int primIdx = 0;
 
 	// load all gltf mesh and primitive data
 	for (int i = 0; i < model.meshes_count; ++i)
 	{
-		const tg3_mesh *mesh = &model.meshes[i];
-		meshes[i].name = mesh->name.data;
+		Mesh &mesh = resources.meshes[i];
+		const tg3_mesh *tg3mesh = &model.meshes[i];
+		mesh.name = tg3mesh->name.data;
 
 		// start with vertex positions
-		meshes[i].subMeshes.resize(mesh->primitives_count);
-		for (int j = 0; j < mesh->primitives_count; ++j)
+		mesh.subMeshes.resize(tg3mesh->primitives_count);
+		for (int j = 0; j < tg3mesh->primitives_count; ++j)
 		{
-			const tg3_primitive *primitive = &mesh->primitives[j];
-			std::vector<Vertex> &vertices = primitiveData[j].first;
-			std::vector<uint32_t> &indices = primitiveData[j].second;
+			const tg3_primitive *primitive = &tg3mesh->primitives[j];
+			std::vector<Vertex> &vertices = primitiveData[primIdx].first;
+			std::vector<uint32_t> &indices = primitiveData[primIdx].second;
+			primIdx++;
 
 			// first look up the positions accessor to get vertex positions and total vertex count
 			for (int k = 0; k < primitive->attributes_count; ++k)
@@ -100,8 +114,8 @@ void importModel(const std::string &filePath)
 					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
 					{
 						vertices.resize(accessor->count);
-						meshes[i].subMeshes[j].vertexStart = totalVertices;
-						meshes[i].subMeshes[j].vertexCount = accessor->count;
+						mesh.subMeshes[j].vertexStart = totalVertices;
+						mesh.subMeshes[j].vertexCount = accessor->count;
 						totalVertices += accessor->count;
 
 						const float *positions = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
@@ -170,8 +184,8 @@ void importModel(const std::string &filePath)
 				const tg3_accessor *accessor = &model.accessors[primitive->indices];
 				const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
 				const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-				meshes[i].subMeshes[j].indexStart = totalIndices;
-				meshes[i].subMeshes[j].indexCount = accessor->count;
+				mesh.subMeshes[j].indexStart = totalIndices;
+				mesh.subMeshes[j].indexCount = accessor->count;
 				totalIndices += accessor->count;
 				indices.resize(accessor->count);
 
@@ -193,18 +207,51 @@ void importModel(const std::string &filePath)
 	}
 
 	// flatten all the vertex data
-	std::vector<Vertex> allVertices(totalVertices);
-	std::vector<uint32_t> allIndices(totalIndices);
+	resources.vertices.resize(totalVertices);
+	resources.indices.resize(totalIndices);
 
 	size_t vertOffset = 0;
 	size_t indexOffset = 0;
 	for (auto &prim : primitiveData)
 	{
-		std::copy(prim.first.begin(), prim.first.end(), allVertices.begin() + vertOffset);
-		std::copy(prim.second.begin(), prim.second.end(), allIndices.begin() + indexOffset);
+		std::copy(prim.first.begin(), prim.first.end(), resources.vertices.begin() + vertOffset);
+		std::copy(prim.second.begin(), prim.second.end(), resources.indices.begin() + indexOffset);
 		vertOffset += prim.first.size();
 		indexOffset += prim.second.size();
 	}
+	return true;
+}
 
-	tg3_model_free(&model);
+uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds)
+{
+	const tg3_node &tg3Node = model.nodes[nodeIndex];
+
+	auto [node, nodeId] = nodeWorld.createNode();
+	node.parentId = parentId;
+
+	if (tg3Node.mesh != -1)
+	{
+		node.meshId = meshIds[tg3Node.mesh];
+	}
+
+	if (prevSiblingId)
+	{
+		nodeWorld.getNode(prevSiblingId).nextSiblingId = nodeId;
+	}
+
+	// iterate through child nodes
+	uint32_t lastChildId = 0;
+	for (int i = 0; i < tg3Node.children_count; ++i)
+	{
+		int32_t childIndex = tg3Node.children[i];
+		lastChildId = importNode(nodeWorld, model, childIndex, nodeId, lastChildId, meshIds);
+
+		// set parent's first child id field
+		if (!node.firstChildId)
+		{
+			node.firstChildId = lastChildId;
+		}
+	}
+
+	return nodeId;
 }

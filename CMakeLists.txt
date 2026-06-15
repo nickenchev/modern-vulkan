@@ -15,7 +15,7 @@ add_executable(vulkanapp
 	 "src/ext/tinygltf_json.h"
 	 "src/ext/tinygltf.cpp"
 	 "src/gltfloader.h"
-	 "src/gltfloader.cpp" "src/resources.h")
+	 "src/gltfloader.cpp" "src/resources.h" "src/nodeworld.h")
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -15,6 +15,8 @@ struct Vertex
 
 struct Mesh
 {
+	uint32_t vertexBufferId = 0;
+	uint32_t indexBufferId = 0;
 	std::string name;
 	std::vector<SubMesh> subMeshes;
 };
@@ -25,12 +27,7 @@ struct SubMesh
 	size_t vertexCount;
 	size_t indexStart;
 	size_t indexCount;
-};
-
-struct Model
-{
-	std::vector<Vertex> vertices;
-	std::vector<uint32_t> indices;
+	uint32_t materialId;
 };
 
 struct Image
@@ -38,9 +35,11 @@ struct Image
 	int width;
 	int height;
 	int channels;
+	unsigned char *data;
 };
 
 struct Material
 {
-	glm::vec3 baseColor;
+	glm::vec4 baseColor;
+	uint32_t baseColorTextureIndex;
 };
