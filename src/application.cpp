@@ -36,6 +36,9 @@ bool Application::initialize()
 bool Application::loadData()
 {
 	std::string filePath = "D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf";
+	//filePath = "D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf";
+	//filePath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
+	filePath = "D:/gltf Models/environment_taverna_low_poly_gameready_assets/scene.gltf";
 	tg3_model model;
 	if (!parseModel(filePath, model))
 	{
@@ -52,7 +55,7 @@ bool Application::loadData()
 
 	// create a fallback color texture
 	uint32_t whitePixel = 0xFFFFFFFF; // RGBA
-	auto [ whiteTexId, whiteTexBuffer ] = createTexture(commandBuffer, reinterpret_cast<unsigned char *>(&whitePixel), 1, 1, 4);
+	auto [whiteTexId, whiteTexBuffer] = createTexture(commandBuffer, reinterpret_cast<unsigned char *>(&whitePixel), 1, 1, 4);
 	stagingBuffers.push_back(whiteTexBuffer);
 
 	// upload images to GPU textures
@@ -60,7 +63,7 @@ bool Application::loadData()
 	for (int i = 0; i < importedRes.images.size(); ++i)
 	{
 		Image &img = importedRes.images[i];
-		auto [ textureId, stagingTexBuffer ] = createTexture(commandBuffer, img.data, img.width, img.height, img.channels);
+		auto [textureId, stagingTexBuffer] = createTexture(commandBuffer, img.data, img.width, img.height, 4); // we're always loading as 4 channel
 		textureIds[i] = textureId;
 		stagingBuffers.push_back(stagingTexBuffer);
 	}
@@ -76,15 +79,10 @@ bool Application::loadData()
 	VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 									.magFilter = VK_FILTER_LINEAR,
 									.minFilter = VK_FILTER_LINEAR,
-									.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-									.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-									.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-									.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-									.anisotropyEnable = VK_TRUE,
-									.maxAnisotropy = 16.0f, // Check limits
-									.compareEnable = VK_FALSE,
-									.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
-									.unnormalizedCoordinates = VK_FALSE };
+									.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+									.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+									.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+									.compareEnable = VK_FALSE };
 
 	if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
 	{
@@ -93,14 +91,15 @@ bool Application::loadData()
 	}
 
 	// update the texture descriptors
-	std::vector<VkDescriptorImageInfo> descriptorWrites(textures.size());
+	std::vector<VkDescriptorImageInfo> descriptorWrites;
+	descriptorWrites.reserve(textures.size());
 	for (GPUTexture &texture : textures)
 	{
 		descriptorWrites.push_back({
 			.sampler = sampler,
 			.imageView = texture.imageView,
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		});
+			});
 	}
 
 	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -123,9 +122,14 @@ bool Application::loadData()
 		materialIds[i] = createMaterial(std::move(gpuMat));
 	}
 
+	// upload materials to the GPU
+	const size_t matBufferSize = materials.size() * sizeof(GPUMaterial);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matBufferSize, materials.data());
+	materialBufferId = addBuffer(matBuffer);
+
 	// upload geo data and get buffer Ids
 	const size_t vertBufferSize = importedRes.vertices.size() * sizeof(Vertex);
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertBufferSize, importedRes.vertices.data());
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertBufferSize, importedRes.vertices.data());
 	if (!vertexBuffer.vkBuffer)
 	{
 		showError("Error creating vertex buffer");
@@ -135,7 +139,7 @@ bool Application::loadData()
 	uint32_t vertexBufferId = addBuffer(vertexBuffer);
 
 	const size_t indexBufferSize = importedRes.indices.size() * sizeof(uint32_t);
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferSize, importedRes.indices.data());
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferSize, importedRes.indices.data());
 	if (!indexBuffer.vkBuffer)
 	{
 		showError("Error creating index buffer");
@@ -161,13 +165,15 @@ bool Application::loadData()
 
 	// import scene nodes
 	const tg3_scene *scene = &model.scenes[model.default_scene != -1
-		? model.default_scene
-		: 0];
+		? model.default_scene : 0];
 
+	// iterate over the roots nodes
+	rootNodes.reserve(scene->nodes_count); // track root node IDs for drawing
 	uint32_t lastNodeId = 0;
 	for (int i = 0; i < scene->nodes_count; ++i)
 	{
 		lastNodeId = importNode(nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
+		rootNodes.push_back(lastNodeId);
 	}
 
 	tg3_model_free(&model);
@@ -231,26 +237,17 @@ void Application::shutdown()
 	vkDeviceWaitIdle(device);
 
 	// clean up descriptor layouts and pool
-	if (globalDSLayout)
-	{
-		vkDestroyDescriptorSetLayout(device, globalDSLayout, nullptr);
-	}
-	if (frameDSLayout)
-	{
-		vkDestroyDescriptorSetLayout(device, frameDSLayout, nullptr);
-	}
-	if (descPool)
-	{
-		vkDestroyDescriptorPool(device, descPool, nullptr);
-	}
+	vkDestroyDescriptorSetLayout(device, globalDSLayout, nullptr);
+	vkDestroyDescriptorPool(device, descPool, nullptr);
 
-	// delete textures
+	// delete textures and samplers
 	for (auto &tex : textures)
 	{
 		vkDestroyImageView(device, tex.imageView, nullptr);
 		vkDestroyImage(device, tex.image, nullptr);
 		vmaFreeMemory(vmaAllocator, tex.allocation);
 	}
+	vkDestroySampler(device, sampler, nullptr);
 
 	// delete buffers
 	for (auto &buff : buffers)
@@ -260,60 +257,35 @@ void Application::shutdown()
 	}
 
 	// frame / sync object cleanup
-	if (timelineSemaphore)
-	{
-		vkDestroySemaphore(device, timelineSemaphore, nullptr);
-	}
+	vkDestroySemaphore(device, timelineSemaphore, nullptr);
 	for (auto &res : frameResources)
 	{
 		vkDestroySemaphore(device, res.imageAcquiredSemaphore, nullptr);
 		vkDestroyCommandPool(device, res.commandPool, nullptr); // destroys buffers implicitly
 	}
-
 	vkDestroyCommandPool(device, commandPool, nullptr);
 
 	// pipeline cleanup
-	if (pipelineLayout)
-	{
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-	}
+	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 	if (pipeline)
 	{
 		vkDestroyPipeline(device, pipeline, nullptr);
 	}
 
 	// cleanup shaders
-	if (vertShader)
-	{
-		vkDestroyShaderModule(device, vertShader, nullptr);
-	}
-	if (fragShader)
-	{
-		vkDestroyShaderModule(device, fragShader, nullptr);
-	}
+	vkDestroyShaderModule(device, vertShader, nullptr);
+	vkDestroyShaderModule(device, fragShader, nullptr);
 
 	// cleanup swapchain
 	destroySwapchain();
 
 	// VMA
-	if (vmaAllocator)
-	{
-		vmaDestroyAllocator(vmaAllocator);
-	}
+	vmaDestroyAllocator(vmaAllocator);
 
 	// cleanup Vulkan
-	if (surface)
-	{
-		vkDestroySurfaceKHR(vulkanInstance, surface, nullptr);
-	}
-	if (device)
-	{
-		vkDestroyDevice(device, nullptr);
-	}
-	if (vulkanInstance)
-	{
-		vkDestroyInstance(vulkanInstance, nullptr);
-	}
+	vkDestroySurfaceKHR(vulkanInstance, surface, nullptr);
+	vkDestroyDevice(device, nullptr);
+	vkDestroyInstance(vulkanInstance, nullptr);
 	volkFinalize();
 
 	// cleanup SDL
@@ -327,8 +299,15 @@ void Application::shutdown()
 void Application::run()
 {
 	running = true;
+	const bool *keys = SDL_GetKeyboardState(nullptr);
+
+	uint64_t prevTime = SDL_GetTicks();
 	while (running)
 	{
+		uint64_t nowTime = SDL_GetTicks();
+		const float deltaTime = (nowTime - prevTime) / 1000.0f;
+		prevTime = nowTime;
+
 		SDL_Event event{ 0 };
 		while (SDL_PollEvent(&event))
 		{
@@ -343,6 +322,32 @@ void Application::run()
 				height = event.window.data2;
 				break;
 			}
+		}
+
+		// handle basic cam movement
+		if (keys[SDL_SCANCODE_A])
+		{
+			camRotation += 1.0f * deltaTime;
+		}
+		if (keys[SDL_SCANCODE_D])
+		{
+			camRotation -= 1.0 * deltaTime;
+		}
+		if (keys[SDL_SCANCODE_W])
+		{
+			camDistance -= 1.0 * deltaTime;
+		}
+		if (keys[SDL_SCANCODE_S])
+		{
+			camDistance += 1.0 * deltaTime;
+		}
+		if (keys[SDL_SCANCODE_UP])
+		{
+			camElevation += 1.0 * deltaTime;
+		}
+		if (keys[SDL_SCANCODE_DOWN])
+		{
+			camElevation -= 1.0 * deltaTime;
 		}
 
 		render();
@@ -907,7 +912,7 @@ VkPipeline Application::createGraphicsPipeline()
 									   .offset = 0,
 									   .size = sizeof(DrawConstants) };
 
-	std::array<VkDescriptorSetLayout, 2> dsLayouts{ globalDSLayout, frameDSLayout };
+	std::array<VkDescriptorSetLayout, 1> dsLayouts{ globalDSLayout };
 
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo
 	{
@@ -982,7 +987,7 @@ VkPipeline Application::createGraphicsPipeline()
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.cullMode = VK_CULL_MODE_BACK_BIT,
-		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+		.frontFace = VK_FRONT_FACE_CLOCKWISE,
 		.lineWidth = 1.0f,
 	};
 
@@ -1270,15 +1275,24 @@ void Application::render()
 		.pDepthAttachment = &depthAttachInfo
 	};
 
+	vkCmdBindDescriptorSets(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &globalDescSet, 0, nullptr);
+
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
 	{
+		DrawConstants drawConsts;
+
+		GPUBuffer &materialBuffer = buffers[materialBufferId - 1];
+		drawConsts.materialBufferAddress = materialBuffer.deviceAddress;
+
 		// set the viewpot and scissor state
 		VkViewport viewport
 		{
-			.x = 0, .y = 0,
+			.x = 0,
+			.y = static_cast<float>(swapchainHeight),
 			.width = static_cast<float>(swapchainWidth),
-			.height = static_cast<float>(swapchainHeight)
+			.height = -static_cast<float>(swapchainHeight),
+			.minDepth = 0, .maxDepth = 1
 		};
 		vkCmdSetViewport(res.commandBuffer, 0, 1, &viewport);
 
@@ -1292,26 +1306,58 @@ void Application::render()
 		// draw our triangle
 		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-		for (const Node &node : nodeWorld.allNodes())
+		glm::vec3 camPosition = glm::vec3(cosf(camRotation), camElevation, sinf(camRotation)) * camDistance;
+
+		const float aspectRatio = width / static_cast<float>(height);
+		glm::mat4 matProj = glm::perspectiveLH(glm::radians(60.0f), aspectRatio, 0.1f, 100.0f);
+		glm::mat4 matView = glm::lookAtLH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+		glm::mat4 matViewProj = matProj * matView;
+
+		// add root nodes to queue
+		std::vector<std::pair<uint32_t, glm::mat4>> nodeQueue;
+		nodeQueue.reserve(128);
+
+		for (uint32_t nodeId : rootNodes)
 		{
+			nodeQueue.push_back({ nodeId, glm::mat4(1) });
+		}
+
+		while (!nodeQueue.empty())
+		{
+			auto [nodeId, parentTransform] = nodeQueue.back();
+			nodeQueue.pop_back();
+
+			Node &node = nodeWorld.getNode(nodeId);
+			glm::mat4 matWorld = parentTransform * node.getTransform();
+			drawConsts.wvp = matViewProj * matWorld;
+
+			// draw the associated mesh
 			if (node.meshId)
 			{
 				// look up the mesh and associated buffer
 				Mesh &mesh = meshes[node.meshId - 1];
 				GPUBuffer &vertBuffer = buffers[mesh.vertexBufferId - 1];
 				GPUBuffer &idxBuffer = buffers[mesh.indexBufferId - 1];
-				DrawConstants drawConsts
-				{
-					.vertexBufferAddress = vertBuffer.deviceAddress
-				};
-				vkCmdPushConstants(res.commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DrawConstants), &drawConsts);
+				drawConsts.vertexBufferAddress = vertBuffer.deviceAddress;
 
 				vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 				for (SubMesh &subMesh : mesh.subMeshes)
 				{
+					drawConsts.materialIndex = subMesh.materialId - 1;
+
+					vkCmdPushConstants(res.commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DrawConstants), &drawConsts);
 					vkCmdDrawIndexed(res.commandBuffer, subMesh.indexCount, 1, subMesh.indexStart, subMesh.vertexStart, 0);
 				}
+			}
+
+			// child nodes for processing
+			uint32_t childNodeId = node.firstChildId;
+			while (childNodeId)
+			{
+				Node &child = nodeWorld.getNode(childNodeId);
+				nodeQueue.push_back({ childNodeId, matWorld });
+				childNodeId = child.nextSiblingId;
 			}
 		}
 	}
@@ -1605,12 +1651,12 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 bool Application::createDescriptorSets()
 {
 	// create a pool to accomodate all descriptor sets
-	std::array<VkDescriptorPoolSize, 2> poolSizes{
-		VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures},
-		VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MaxFramesInFlight} };
+	std::array<VkDescriptorPoolSize, 1> poolSizes{
+		VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures} };
+
 	VkDescriptorPoolCreateInfo poolInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 										.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
-										.maxSets = MaxFramesInFlight + 1,
+										.maxSets = 1,
 										.poolSizeCount = poolSizes.size(),
 										.pPoolSizes = poolSizes.data() };
 	if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descPool) != VK_SUCCESS)
@@ -1660,57 +1706,7 @@ bool Application::createDescriptorSets()
 		}
 	}
 
-	// frame descriptor set
-	{
-		std::array<VkDescriptorSetLayoutBinding, 1> bindings = {
-			VkDescriptorSetLayoutBinding{.binding = 0,
-										 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-										 .descriptorCount = 1,
-										 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT} };
-
-		std::array<VkDescriptorBindingFlags, 1> flags;
-		flags[0] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-
-		VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-			.bindingCount = flags.size(),
-			.pBindingFlags = flags.data() };
-
-		VkDescriptorSetLayoutCreateInfo layoutInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-												   .pNext = &flagsInfo,
-												   .flags = 0,
-												   .bindingCount = bindings.size(),
-												   .pBindings = bindings.data() };
-
-		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &frameDSLayout) != VK_SUCCESS)
-		{
-			showError("Unable to create descriptor set layout");
-			return false;
-		}
-
-		// per-frame descriptor set creation
-		VkDescriptorSetAllocateInfo descSetAllocInfo{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = descPool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &frameDSLayout,
-		};
-
-		for (auto &res : frameResources)
-		{
-			if (vkAllocateDescriptorSets(device, &descSetAllocInfo, &res.descSet) != VK_SUCCESS)
-			{
-				showError("Unable to allocate descriptor set");
-				return false;
-			}
-		}
-	}
-
 	return true;
-}
-
-void Application::updateGPUTextures()
-{
 }
 
 GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, void *initData)
@@ -1720,7 +1716,7 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, v
 	{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = byteSize,
-		.usage = usage,
+		.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE
 	};
 	VmaAllocationCreateInfo allocInfo

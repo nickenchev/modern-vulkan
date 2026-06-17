@@ -7,7 +7,10 @@
 #include <vector>
 #include <array>
 #include <shaderc/shaderc.hpp>
+
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include "resources.h"
 #include "nodeworld.h"
@@ -20,7 +23,10 @@ typedef struct VmaAllocation_T* VmaAllocation;
 
 struct DrawConstants
 {
+	glm::mat4 wvp;
 	uint64_t vertexBufferAddress = 0;
+	uint64_t materialBufferAddress = 0;
+	uint32_t materialIndex;
 };
 
 struct FrameResources
@@ -55,7 +61,7 @@ class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
 	constexpr static uint32_t MaxFramesInFlight{ 2 };
-	constexpr static size_t MaxTextures = 1024;
+	constexpr static size_t MaxTextures = 128;
 	constexpr static VkFormat SwapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
 
@@ -111,15 +117,21 @@ class Application
 	std::vector<GPUTexture> textures;
 	std::vector<GPUBuffer> buffers;
 	std::vector<GPUMaterial> materials;
+	uint32_t materialBufferId = 0;
 
 	// descriptors
 	VkDescriptorSetLayout globalDSLayout = nullptr;
-	VkDescriptorSetLayout frameDSLayout = nullptr;
 	VkDescriptorSet globalDescSet = nullptr;
 	VkDescriptorPool descPool = nullptr;
 
 	// game nodes and scene data
 	NodeWorld nodeWorld;
+	std::vector<uint32_t> rootNodes;
+
+	// camera related
+	float camDistance = 3;
+	float camRotation = glm::radians(90.0f);
+	float camElevation = 0;
 
 	void showError(const std::string &errorMessasge) const;
 
@@ -151,8 +163,6 @@ class Application
 	uint32_t addMesh(Mesh &&mesh);
 
 	uint32_t createNode(Node &&node);
-
-	void updateGPUTextures();
 
 public:
 	bool initialize();

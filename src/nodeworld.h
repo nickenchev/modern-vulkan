@@ -2,41 +2,66 @@
 
 #include <vector>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 class Node
 {
-	glm::vec3 position;
-	glm::vec3 scale;
-	glm::mat4 localTransform;
+	glm::vec3 translation = glm::vec3(0, 0, 0);
+	glm::vec3 scale = glm::vec3(1, 1, 1);
+	glm::mat4 transform = glm::mat4(1);
+	glm::quat rotation = glm::quat(1, 0, 0, 0);
 	bool dirty = true;
 
 public:
-	uint32_t meshId;
+	uint32_t meshId = 0;
 	uint32_t parentId = 0;
 	uint32_t nextSiblingId = 0;
 	uint32_t firstChildId = 0;
 
-	glm::vec3 getPosition() const { return position; }
-	void setPosition(glm::vec3 &position)
+	glm::vec3 getTranslation() const { return translation; }
+	void setTranslation(const glm::vec3 &translation)
 	{
-		this->position = position;
-		this->dirty = true;
+		this->translation = translation;
+		dirty = true;
 	}
 
-	glm::vec4 getLocalMatrix()
+	glm::quat getRotation() const { return rotation; }
+	void setRotation(const glm::quat &rotation)
+	{
+		this->rotation = rotation;
+		dirty = true;
+	}
+
+	glm::vec3 getScale() const { return scale; }
+	void setScale(const glm::vec3 &scale)
+	{
+		this->scale = scale;
+		dirty = true;
+	}
+
+	glm::mat4 getTransform()
 	{
 		if (dirty)
 		{
 			// recalculate the local transform matrix
-			localTransform = glm::mat4(1);
+			glm::mat4 matTranslate = glm::translate(glm::mat4(1), translation);
+			glm::mat4 matRotate = glm::mat4_cast(rotation);
+			glm::mat4 matScale = glm::scale(glm::mat4(1), scale);
+			transform = matTranslate * matRotate * matScale;
 			dirty = false;
 		}
+		return transform;
+	}
+	void setTransform(glm::mat4 &transform)
+	{
+		this->transform = transform;
+		dirty = false;
 	}
 };
 
 class NodeWorld
 {
-	constexpr static size_t MAX_NODES = 256;
+	constexpr static size_t MAX_NODES = 1024;
 
 	std::vector<Node> nodes;
 
@@ -61,5 +86,5 @@ public:
 		return nodes[nodeId - 1];
 	}
 
-	const std::vector<Node> &allNodes() const { return nodes; }
+	std::vector<Node> &allNodes() { return nodes; }
 };

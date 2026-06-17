@@ -7,7 +7,10 @@
 
 layout(push_constant, scalar) uniform DrawConstants
 {
+    mat4x4 wvp;
     uint64_t vertexAddress;
+    uint64_t materialAddress;
+    uint materialIndex;
 } drawConsts;
 
 struct Vertex
@@ -23,11 +26,30 @@ layout(buffer_reference, scalar) readonly buffer VertexPtr
     Vertex vertices[];
 };
 
-layout (location = 0) out vec3 outColor;
+struct Material
+{
+    vec4 baseColor;
+    uint textureId;
+};
 
-void main() {
+layout(buffer_reference, scalar) readonly buffer MaterialPtr
+{
+    Material materials[];
+};
+
+layout (location = 0) out vec3 outColor;
+layout (location = 1) out vec2 outUV;
+layout (location = 2) out flat uint outTextureIndex;
+
+void main()
+{
     VertexPtr vBuffer = VertexPtr(drawConsts.vertexAddress);
     Vertex v = vBuffer.vertices[gl_VertexIndex];
-    gl_Position = vec4(v.position, 1.0);
-    outColor = v.position;
+
+    MaterialPtr matBuff = MaterialPtr(drawConsts.materialAddress);
+    outTextureIndex = matBuff.materials[drawConsts.materialIndex].textureId - 1;
+
+    gl_Position = drawConsts.wvp * vec4(v.position, 1.0);
+    outColor = v.color;
+    outUV = v.uv;
 }

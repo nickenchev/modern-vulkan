@@ -8,6 +8,8 @@
 #include "resources.h"
 #include "nodeworld.h"
 
+#include <glm/gtc/type_ptr.inl>
+
 bool parseModel(const std::string &filePath, tg3_model &model)
 {
 	std::filesystem::path path(filePath);
@@ -48,6 +50,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 	{
 		Image &img = resources.images[i];
 		std::filesystem::path imagePath = path.parent_path() / model.images[i].uri.data;
+		std::print("Loading image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
 		img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
 	}
 
@@ -90,7 +93,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 	{
 		Mesh &mesh = resources.meshes[i];
 		const tg3_mesh *tg3mesh = &model.meshes[i];
-		mesh.name = tg3mesh->name.data;
+		mesh.name = tg3mesh->name.data != nullptr ? tg3mesh->name.data : "No Name";
 
 		// start with vertex positions
 		mesh.subMeshes.resize(tg3mesh->primitives_count);
@@ -228,6 +231,27 @@ uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIn
 
 	auto [node, nodeId] = nodeWorld.createNode();
 	node.parentId = parentId;
+
+	if (tg3Node.has_matrix)
+	{
+		glm::mat4 transform;
+		float *transformPtr = glm::value_ptr(transform);
+		for (int i = 0; i < 16; ++i)
+		{
+			transformPtr[i] = static_cast<float>(tg3Node.matrix[i]);
+		}
+		node.setTransform(transform);
+	}
+	else
+	{
+		glm::vec3 translation(tg3Node.translation[0], tg3Node.translation[1], tg3Node.translation[2]);
+		glm::quat rotation(tg3Node.rotation[3], tg3Node.rotation[0], tg3Node.rotation[1], tg3Node.rotation[2]);
+		glm::vec3 scale(tg3Node.scale[0], tg3Node.scale[1], tg3Node.scale[2]);
+		
+		node.setTranslation(translation);
+		node.setRotation(rotation);
+		node.setScale(scale);
+	}
 
 	if (tg3Node.mesh != -1)
 	{
