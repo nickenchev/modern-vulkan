@@ -103,6 +103,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 			std::vector<Vertex> &vertices = primitiveData[primIdx].first;
 			std::vector<uint32_t> &indices = primitiveData[primIdx].second;
 			primIdx++;
+			mesh.subMeshes[j].materialId = primitive->material;
 
 			// first look up the positions accessor to get vertex positions and total vertex count
 			for (int k = 0; k < primitive->attributes_count; ++k)
@@ -125,6 +126,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 						for (uint64_t idx = 0; idx < accessor->count; ++idx)
 						{
 							vertices[idx].position = glm::vec3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
+							vertices[idx].color = glm::vec4(1, 1, 1, 1);
 						}
 					}
 				}
@@ -234,7 +236,7 @@ uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIn
 
 	if (tg3Node.has_matrix)
 	{
-		glm::mat4 transform;
+		glm::mat4 transform(1);
 		float *transformPtr = glm::value_ptr(transform);
 		for (int i = 0; i < 16; ++i)
 		{

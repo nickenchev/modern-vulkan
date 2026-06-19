@@ -24,6 +24,7 @@ typedef struct VmaAllocation_T* VmaAllocation;
 struct DrawConstants
 {
 	glm::mat4 wvp;
+	glm::mat4 worldMatrix;
 	uint64_t vertexBufferAddress = 0;
 	uint64_t materialBufferAddress = 0;
 	uint32_t materialIndex;
@@ -65,76 +66,75 @@ class Application
 	constexpr static VkFormat SwapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
 
-	SDL_Window* window = nullptr;
-	uint32_t width = 1280;
-	uint32_t height = 720;
-	bool running = false;
-    uint64_t frameIndex = 0;
-    uint64_t nextSignalValue = MaxFramesInFlight + 1;
+	SDL_Window* m_window = nullptr;
+	uint32_t m_width = 1280;
+	uint32_t m_height = 720;
+	bool m_running = false;
+    uint64_t m_frameIndex = 0;
+    uint64_t m_nextSignalValue = MaxFramesInFlight + 1;
 
 	// vulkan core
-	VkInstance vulkanInstance = nullptr;
-	VkPhysicalDevice physicalDevice = nullptr;
-	VkDevice device = nullptr;
-	VkSurfaceKHR surface = nullptr;
-	VmaAllocator vmaAllocator = nullptr;
+	VkInstance m_vulkanInstance = nullptr;
+	VkPhysicalDevice m_physicalDevice = nullptr;
+	VkDevice m_device = nullptr;
+	VkSurfaceKHR m_surface = nullptr;
+	VmaAllocator m_vmaAllocator = nullptr;
 
 	// queue related
-	uint32_t gfxQueueFamIdx = UINT32_MAX;
-	VkQueue gfxQueue = nullptr;
-	VkCommandPool commandPool = nullptr;
+	uint32_t m_gfxQueueFamIdx = UINT32_MAX;
+	VkQueue m_gfxQueue = nullptr;
+	VkCommandPool m_commandPool = nullptr;
 
 	// swapchain related
-	VkSwapchainKHR swapchain = nullptr;
-	std::vector<VkImage> swapchainImages;
-	std::vector<VkImageView> swapchainImageViews;
-	std::vector<VkSemaphore> renderCompleteSemaphores;
-	bool requireSwapchainRecreate = false;
-	uint32_t swapchainWidth = 0;
-	uint32_t swapchainHeight = 0;
+	VkSwapchainKHR m_swapchain = nullptr;
+	std::vector<VkImage> m_swapchainImages;
+	std::vector<VkImageView> m_swapchainImageViews;
+	std::vector<VkSemaphore> m_renderCompleteSemaphores;
+	bool m_requireSwapchainRecreate = false;
+	uint32_t m_swapchainWidth = 0;
+	uint32_t m_swapchainHeight = 0;
 
-	VkImage depthImage = nullptr;
-	VkImageView depthImageView = nullptr;
-	VmaAllocation depthImageAllocation = nullptr;
+	VkImage m_depthImage = nullptr;
+	VkImageView m_depthImageView = nullptr;
+	VmaAllocation m_depthImageAllocation = nullptr;
 
 	// graphics pipeline related
-	VkPipelineLayout pipelineLayout = nullptr;
-	VkPipeline pipeline = nullptr;
+	VkPipelineLayout m_pipelineLayout = nullptr;
+	VkPipeline m_pipeline = nullptr;
 
 	// shader resources
-	VkShaderModule vertShader = nullptr;
-	VkShaderModule fragShader = nullptr;
+	VkShaderModule m_vertShader = nullptr;
+	VkShaderModule m_fragShader = nullptr;
 
 	// frame and synchronization resources
-	VkSemaphore timelineSemaphore = nullptr;
-	std::array<FrameResources, MaxFramesInFlight> frameResources;
+	VkSemaphore m_timelineSemaphore = nullptr;
+	std::array<FrameResources, MaxFramesInFlight> m_frameResources;
 
 	// cpu resources
-	std::vector<Mesh> meshes;
+	std::vector<Mesh> m_meshes;
 
 	// gpu resources
-	VkSampler sampler = nullptr;
-	std::vector<GPUTexture> textures;
-	std::vector<GPUBuffer> buffers;
-	std::vector<GPUMaterial> materials;
-	uint32_t materialBufferId = 0;
+	VkSampler m_sampler = nullptr;
+	std::vector<GPUTexture> m_textures;
+	std::vector<GPUBuffer> m_buffers;
+	std::vector<GPUMaterial> m_materials;
+	uint32_t m_materialBufferId = 0;
 
 	// descriptors
-	VkDescriptorSetLayout globalDSLayout = nullptr;
-	VkDescriptorSet globalDescSet = nullptr;
-	VkDescriptorPool descPool = nullptr;
+	VkDescriptorSetLayout m_globalDSLayout = nullptr;
+	VkDescriptorSet m_globalDescSet = nullptr;
+	VkDescriptorPool m_descPool = nullptr;
 
 	// game nodes and scene data
-	NodeWorld nodeWorld;
-	std::vector<uint32_t> rootNodes;
+	NodeWorld m_nodeWorld;
+	std::vector<uint32_t> m_rootNodes;
 
 	// camera related
-	float camDistance = 3;
-	float camRotation = glm::radians(90.0f);
-	float camElevation = 0;
+	float m_camDistance = 3;
+	float m_camRotation = glm::radians(90.0f);
+	float m_camElevation = 0;
 
 	void showError(const std::string &errorMessasge) const;
-
 	bool initializeVulkan();
 	bool createVulkanInstance();
 	bool createSurface();
@@ -151,17 +151,13 @@ class Application
 	bool createCommandBuffers();
 	bool createDescriptorSets();
 	void render();
-
 	VkCommandBuffer startTransientCommandBuffer();
 	void submitTransientCommandBuffer(VkCommandBuffer commandBuffer);
-
 	std::pair<uint32_t, GPUBuffer> createTexture(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
 	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, void *initData);
 	uint32_t addBuffer(const GPUBuffer &buffer);
-	
 	uint32_t createMaterial(GPUMaterial &&gpuMat);
 	uint32_t addMesh(Mesh &&mesh);
-
 	uint32_t createNode(Node &&node);
 
 public:

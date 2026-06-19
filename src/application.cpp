@@ -12,14 +12,14 @@
 
 void Application::showError(const std::string &errorMessasge) const
 {
-	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessasge.c_str(), window);
+	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", errorMessasge.c_str(), m_window);
 }
 
 bool Application::initialize()
 {
 	SDL_InitSubSystem(SDL_INIT_VIDEO);
-	window = SDL_CreateWindow("Vulkan Learning", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-	if (!window)
+	m_window = SDL_CreateWindow("Vulkan Learning", m_width, m_height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+	if (!m_window)
 	{
 		showError("Error creating window");
 		return false;
@@ -36,9 +36,10 @@ bool Application::initialize()
 bool Application::loadData()
 {
 	std::string filePath = "D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf";
-	//filePath = "D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf";
+	filePath = "D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf";
 	//filePath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
-	filePath = "D:/gltf Models/environment_taverna_low_poly_gameready_assets/scene.gltf";
+	//filePath = "D:/gltf Models/barn/scene.gltf";
+	filePath = "D:/gltf Models/dark_sci-fi_hallway/scene.gltf";
 	tg3_model model;
 	if (!parseModel(filePath, model))
 	{
@@ -73,9 +74,10 @@ bool Application::loadData()
 	// clean up the staging buffers
 	for (GPUBuffer &stageBuff : stagingBuffers)
 	{
-		vmaDestroyBuffer(vmaAllocator, stageBuff.vkBuffer, stageBuff.allocation);
+		vmaDestroyBuffer(m_vmaAllocator, stageBuff.vkBuffer, stageBuff.allocation);
 	}
 
+	// single sampler is simpler for now
 	VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 									.magFilter = VK_FILTER_LINEAR,
 									.minFilter = VK_FILTER_LINEAR,
@@ -84,7 +86,7 @@ bool Application::loadData()
 									.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 									.compareEnable = VK_FALSE };
 
-	if (vkCreateSampler(device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
+	if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
 	{
 		showError("Unable to create texture sampler");
 		return false;
@@ -92,24 +94,23 @@ bool Application::loadData()
 
 	// update the texture descriptors
 	std::vector<VkDescriptorImageInfo> descriptorWrites;
-	descriptorWrites.reserve(textures.size());
-	for (GPUTexture &texture : textures)
+	descriptorWrites.reserve(m_textures.size());
+	for (GPUTexture &texture : m_textures)
 	{
 		descriptorWrites.push_back({
-			.sampler = sampler,
+			.sampler = m_sampler,
 			.imageView = texture.imageView,
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-			});
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
 	}
 
 	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-								.dstSet = globalDescSet,
+								.dstSet = m_globalDescSet,
 								.dstBinding = 0,
 								.dstArrayElement = 0,
 								.descriptorCount = static_cast<uint32_t>(descriptorWrites.size()),
 								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 								.pImageInfo = descriptorWrites.data() };
-	vkUpdateDescriptorSets(device, 1, &descWrites, 0, nullptr);
+	vkUpdateDescriptorSets(m_device, 1, &descWrites, 0, nullptr);
 
 	// create GPU side material list
 	std::vector<uint32_t> materialIds(importedRes.materials.size());
@@ -123,9 +124,9 @@ bool Application::loadData()
 	}
 
 	// upload materials to the GPU
-	const size_t matBufferSize = materials.size() * sizeof(GPUMaterial);
-	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matBufferSize, materials.data());
-	materialBufferId = addBuffer(matBuffer);
+	const size_t matBufferSize = m_materials.size() * sizeof(GPUMaterial);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matBufferSize, m_materials.data());
+	m_materialBufferId = addBuffer(matBuffer);
 
 	// upload geo data and get buffer Ids
 	const size_t vertBufferSize = importedRes.vertices.size() * sizeof(Vertex);
@@ -148,7 +149,7 @@ bool Application::loadData()
 	}
 	uint32_t indexBufferId = addBuffer(indexBuffer);
 
-	// set buffer Ids and generate meshIds
+	// mapping gltf material indices to material IDs
 	std::vector<uint32_t> meshIds(importedRes.meshes.size());
 	for (int i = 0; i < importedRes.meshes.size(); ++i)
 	{
@@ -156,6 +157,7 @@ bool Application::loadData()
 		mesh.vertexBufferId = vertexBufferId;
 		mesh.indexBufferId = indexBufferId;
 
+		// map gltf material index to loaded material ID
 		for (SubMesh &subMesh : mesh.subMeshes)
 		{
 			subMesh.materialId = materialIds[subMesh.materialId];
@@ -168,12 +170,12 @@ bool Application::loadData()
 		? model.default_scene : 0];
 
 	// iterate over the roots nodes
-	rootNodes.reserve(scene->nodes_count); // track root node IDs for drawing
+	m_rootNodes.reserve(scene->nodes_count); // track root node IDs for drawing
 	uint32_t lastNodeId = 0;
 	for (int i = 0; i < scene->nodes_count; ++i)
 	{
-		lastNodeId = importNode(nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
-		rootNodes.push_back(lastNodeId);
+		lastNodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
+		m_rootNodes.push_back(lastNodeId);
 	}
 
 	tg3_model_free(&model);
@@ -187,13 +189,13 @@ VkCommandBuffer Application::startTransientCommandBuffer()
 	VkCommandBufferAllocateInfo cmdAllocInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-		.commandPool = commandPool,
+		.commandPool = m_commandPool,
 		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 		.commandBufferCount = 1,
 	};
 
 	VkCommandBuffer commandBuffer = nullptr;
-	if (vkAllocateCommandBuffers(device, &cmdAllocInfo, &commandBuffer) != VK_SUCCESS)
+	if (vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &commandBuffer) != VK_SUCCESS)
 	{
 		showError("Unable to allocate command buffer");
 		return nullptr;
@@ -226,83 +228,83 @@ void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
 		.pCommandBuffers = &commandBuffer
 	};
 
-	vkQueueSubmit(gfxQueue, 1, &submitInfo, nullptr);
-	vkQueueWaitIdle(gfxQueue);
-	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+	vkQueueSubmit(m_gfxQueue, 1, &submitInfo, nullptr);
+	vkQueueWaitIdle(m_gfxQueue);
+	vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 }
 
 void Application::shutdown()
 {
 	// wait in case resources are in use
-	vkDeviceWaitIdle(device);
+	vkDeviceWaitIdle(m_device);
 
 	// clean up descriptor layouts and pool
-	vkDestroyDescriptorSetLayout(device, globalDSLayout, nullptr);
-	vkDestroyDescriptorPool(device, descPool, nullptr);
+	vkDestroyDescriptorSetLayout(m_device, m_globalDSLayout, nullptr);
+	vkDestroyDescriptorPool(m_device, m_descPool, nullptr);
 
 	// delete textures and samplers
-	for (auto &tex : textures)
+	for (auto &tex : m_textures)
 	{
-		vkDestroyImageView(device, tex.imageView, nullptr);
-		vkDestroyImage(device, tex.image, nullptr);
-		vmaFreeMemory(vmaAllocator, tex.allocation);
+		vkDestroyImageView(m_device, tex.imageView, nullptr);
+		vkDestroyImage(m_device, tex.image, nullptr);
+		vmaFreeMemory(m_vmaAllocator, tex.allocation);
 	}
-	vkDestroySampler(device, sampler, nullptr);
+	vkDestroySampler(m_device, m_sampler, nullptr);
 
 	// delete buffers
-	for (auto &buff : buffers)
+	for (auto &buff : m_buffers)
 	{
-		vkDestroyBuffer(device, buff.vkBuffer, nullptr);
-		vmaFreeMemory(vmaAllocator, buff.allocation);
+		vkDestroyBuffer(m_device, buff.vkBuffer, nullptr);
+		vmaFreeMemory(m_vmaAllocator, buff.allocation);
 	}
 
 	// frame / sync object cleanup
-	vkDestroySemaphore(device, timelineSemaphore, nullptr);
-	for (auto &res : frameResources)
+	vkDestroySemaphore(m_device, m_timelineSemaphore, nullptr);
+	for (auto &res : m_frameResources)
 	{
-		vkDestroySemaphore(device, res.imageAcquiredSemaphore, nullptr);
-		vkDestroyCommandPool(device, res.commandPool, nullptr); // destroys buffers implicitly
+		vkDestroySemaphore(m_device, res.imageAcquiredSemaphore, nullptr);
+		vkDestroyCommandPool(m_device, res.commandPool, nullptr); // destroys buffers implicitly
 	}
-	vkDestroyCommandPool(device, commandPool, nullptr);
+	vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 
 	// pipeline cleanup
-	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-	if (pipeline)
+	vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+	if (m_pipeline)
 	{
-		vkDestroyPipeline(device, pipeline, nullptr);
+		vkDestroyPipeline(m_device, m_pipeline, nullptr);
 	}
 
 	// cleanup shaders
-	vkDestroyShaderModule(device, vertShader, nullptr);
-	vkDestroyShaderModule(device, fragShader, nullptr);
+	vkDestroyShaderModule(m_device, m_vertShader, nullptr);
+	vkDestroyShaderModule(m_device, m_fragShader, nullptr);
 
 	// cleanup swapchain
 	destroySwapchain();
 
 	// VMA
-	vmaDestroyAllocator(vmaAllocator);
+	vmaDestroyAllocator(m_vmaAllocator);
 
 	// cleanup Vulkan
-	vkDestroySurfaceKHR(vulkanInstance, surface, nullptr);
-	vkDestroyDevice(device, nullptr);
-	vkDestroyInstance(vulkanInstance, nullptr);
+	vkDestroySurfaceKHR(m_vulkanInstance, m_surface, nullptr);
+	vkDestroyDevice(m_device, nullptr);
+	vkDestroyInstance(m_vulkanInstance, nullptr);
 	volkFinalize();
 
 	// cleanup SDL
-	if (window)
+	if (m_window)
 	{
-		SDL_DestroyWindow(window);
+		SDL_DestroyWindow(m_window);
 	}
 	SDL_Quit();
 }
 
 void Application::run()
 {
-	running = true;
+	m_running = true;
 	const bool *keys = SDL_GetKeyboardState(nullptr);
 
 	uint64_t prevTime = SDL_GetTicks();
-	while (running)
+	while (m_running)
 	{
 		uint64_t nowTime = SDL_GetTicks();
 		const float deltaTime = (nowTime - prevTime) / 1000.0f;
@@ -313,41 +315,42 @@ void Application::run()
 		{
 			if (event.type == SDL_EVENT_QUIT)
 			{
-				running = false;
+				m_running = false;
 				break;
 			}
 			else if (event.type == SDL_EVENT_WINDOW_RESIZED)
 			{
-				width = event.window.data1;
-				height = event.window.data2;
+				m_width = event.window.data1;
+				m_height = event.window.data2;
 				break;
 			}
 		}
 
 		// handle basic cam movement
+		const float speed = 0.3f;
 		if (keys[SDL_SCANCODE_A])
 		{
-			camRotation += 1.0f * deltaTime;
+			m_camRotation += speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_D])
 		{
-			camRotation -= 1.0 * deltaTime;
+			m_camRotation -= speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_W])
 		{
-			camDistance -= 1.0 * deltaTime;
+			m_camDistance -= speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_S])
 		{
-			camDistance += 1.0 * deltaTime;
+			m_camDistance += speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_UP])
 		{
-			camElevation += 1.0 * deltaTime;
+			m_camElevation += speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_DOWN])
 		{
-			camElevation -= 1.0 * deltaTime;
+			m_camElevation -= speed * deltaTime;
 		}
 
 		render();
@@ -368,7 +371,7 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
-	if (physicalDevice = findPhysicalDevice(); !physicalDevice)
+	if (m_physicalDevice = findPhysicalDevice(); !m_physicalDevice)
 	{
 		showError("Unable to find an appropriate physical device");
 		return false;
@@ -380,7 +383,7 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
-	if (!createDevice(physicalDevice))
+	if (!createDevice(m_physicalDevice))
 	{
 		showError("Couldn't create the logical GPU device");
 		return false;
@@ -392,7 +395,7 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
-	if (!createSwapchain(width, height))
+	if (!createSwapchain(m_width, m_height))
 	{
 		showError("Unable to create swapchain");
 		return false;
@@ -410,7 +413,7 @@ bool Application::initializeVulkan()
 		return false;
 	}
 
-	if (pipeline = createGraphicsPipeline(); !pipeline)
+	if (m_pipeline = createGraphicsPipeline(); !m_pipeline)
 	{
 		showError("Unable to initialize the graphics pipeline");
 		return false;
@@ -466,18 +469,18 @@ bool Application::createVulkanInstance()
 		.ppEnabledExtensionNames = extensions
 	};
 
-	if (vkCreateInstance(&instCreateInfo, nullptr, &vulkanInstance) != VK_SUCCESS)
+	if (vkCreateInstance(&instCreateInfo, nullptr, &m_vulkanInstance) != VK_SUCCESS)
 	{
 		return false;
 	}
 
-	volkLoadInstance(vulkanInstance);
+	volkLoadInstance(m_vulkanInstance);
 	return true;
 }
 
 bool Application::createSurface()
 {
-	if (!SDL_Vulkan_CreateSurface(window, vulkanInstance, nullptr, &surface))
+	if (!SDL_Vulkan_CreateSurface(m_window, m_vulkanInstance, nullptr, &m_surface))
 	{
 		return false;
 	}
@@ -488,9 +491,9 @@ VkPhysicalDevice Application::findPhysicalDevice()
 {
 	// enumerate all physical devices
 	uint32_t physDeviceCount = 0;
-	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, nullptr);
+	vkEnumeratePhysicalDevices(m_vulkanInstance, &physDeviceCount, nullptr);
 	std::vector<VkPhysicalDevice> physicalDevices(physDeviceCount);
-	vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, physicalDevices.data());
+	vkEnumeratePhysicalDevices(m_vulkanInstance, &physDeviceCount, physicalDevices.data());
 
 	VkPhysicalDevice physicalDevice = nullptr;
 	if (physDeviceCount)
@@ -512,9 +515,9 @@ VkPhysicalDevice Application::findPhysicalDevice()
 
 	// ensure the desired swapchain format is supported
 	uint32_t formatCount = 0;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, nullptr);
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, m_surface, &formatCount, nullptr);
 	std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
-	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatCount, surfaceFormats.data());
+	vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, m_surface, &formatCount, surfaceFormats.data());
 
 	bool formatSupported = false;
 	for (const VkSurfaceFormatKHR &surfFormat : surfaceFormats)
@@ -539,21 +542,21 @@ bool Application::findGraphicsQueue()
 	// eventually we'll have more complex queue lookup for presentation, etc
 	// grab all of the queue families
 	uint32_t queueFamCount = 0;
-	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, nullptr);
+	vkGetPhysicalDeviceQueueFamilyProperties2(m_physicalDevice, &queueFamCount, nullptr);
 	std::vector<VkQueueFamilyProperties2> queueFamProps(queueFamCount, { VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 });
-	vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount, queueFamProps.data());
+	vkGetPhysicalDeviceQueueFamilyProperties2(m_physicalDevice, &queueFamCount, queueFamProps.data());
 
 	for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size(); currentFamIdx++)
 	{
 		// ensure it has presentation support
 		VkBool32 hasPresentSupport = false;
-		vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, currentFamIdx, surface, &hasPresentSupport);
+		vkGetPhysicalDeviceSurfaceSupportKHR(m_physicalDevice, currentFamIdx, m_surface, &hasPresentSupport);
 
 		const auto &props = queueFamProps[currentFamIdx];
 		// ensure this is a GRAPHICS queue with presentation support
 		if (props.queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT && hasPresentSupport)
 		{
-			gfxQueueFamIdx = currentFamIdx;
+			m_gfxQueueFamIdx = currentFamIdx;
 			return true;
 		}
 	}
@@ -564,12 +567,12 @@ bool Application::findGraphicsQueue()
 bool Application::createDevice(VkPhysicalDevice physicalDevice)
 {
 	float queuePriority = 1.0f;
-	std::vector<uint32_t> queueFamiles{ gfxQueueFamIdx };
+	std::vector<uint32_t> queueFamiles{ m_gfxQueueFamIdx };
 
 	VkDeviceQueueCreateInfo gfxQueueInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = gfxQueueFamIdx,
+		.queueFamilyIndex = m_gfxQueueFamIdx,
 		.queueCount = 1,
 		.pQueuePriorities = &queuePriority
 	};
@@ -660,14 +663,14 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 		.pEnabledFeatures = nullptr // features struct chain is set in pNext
 	};
 
-	if (vkCreateDevice(physicalDevice, &devCreateInfo, nullptr, &device) != VK_SUCCESS)
+	if (vkCreateDevice(physicalDevice, &devCreateInfo, nullptr, &m_device) != VK_SUCCESS)
 	{
 		return false;
 	}
 
 	// grab the VkQueue object finally
-	vkGetDeviceQueue(device, gfxQueueFamIdx, 0, &gfxQueue);
-	if (!gfxQueue)
+	vkGetDeviceQueue(m_device, m_gfxQueueFamIdx, 0, &m_gfxQueue);
+	if (!m_gfxQueue)
 	{
 		showError("Couldn't get the graphics queue");
 		return false;
@@ -681,17 +684,17 @@ bool Application::initializeVMA()
 	VmaAllocatorCreateInfo vmaAllocInfo
 	{
 		.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-		.physicalDevice = physicalDevice,
-		.device = device,
+		.physicalDevice = m_physicalDevice,
+		.device = m_device,
 		.pVulkanFunctions = &vmaFuncInfo,
-		.instance = vulkanInstance,
+		.instance = m_vulkanInstance,
 		.vulkanApiVersion = VulkanVersion
 	};
 
 	// vma can import directly from volk
 	vmaImportVulkanFunctionsFromVolk(&vmaAllocInfo, &vmaFuncInfo);
 
-	if (vmaCreateAllocator(&vmaAllocInfo, &vmaAllocator) != VK_SUCCESS)
+	if (vmaCreateAllocator(&vmaAllocInfo, &m_vmaAllocator) != VK_SUCCESS)
 	{
 		return false;
 	}
@@ -700,11 +703,11 @@ bool Application::initializeVMA()
 
 bool Application::createSwapchain(uint32_t width, uint32_t height)
 {
-	swapchainWidth = width;
-	swapchainHeight = height;
+	m_swapchainWidth = width;
+	m_swapchainHeight = height;
 
 	VkSurfaceCapabilitiesKHR surfaceCaps{};
-	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &surfaceCaps) != VK_SUCCESS)
+	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_physicalDevice, m_surface, &surfaceCaps) != VK_SUCCESS)
 	{
 		showError("Couldn't get the surface capabilities");
 		return false;
@@ -713,11 +716,11 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 	VkSwapchainCreateInfoKHR swapchainCreateInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = surface,
+		.surface = m_surface,
 		.minImageCount = surfaceCaps.minImageCount,
 		.imageFormat = SwapchainFormat,
 		.imageColorSpace = VK_COLORSPACE_SRGB_NONLINEAR_KHR,
-		.imageExtent{.width = swapchainWidth, .height = swapchainHeight },
+		.imageExtent{.width = m_swapchainWidth, .height = m_swapchainHeight },
 		.imageArrayLayers = 1,
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 		.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
@@ -725,7 +728,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		.presentMode = VK_PRESENT_MODE_FIFO_KHR
 	};
 
-	if (vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain) != VK_SUCCESS)
+	if (vkCreateSwapchainKHR(m_device, &swapchainCreateInfo, nullptr, &m_swapchain) != VK_SUCCESS)
 	{
 		showError("Error creating swapchain");
 		return false;
@@ -733,18 +736,18 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 
 	// grab the swapchain images
 	uint32_t imageCount = 0;
-	vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
-	swapchainImages.resize(imageCount);
-	vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
-	swapchainImageViews.resize(imageCount);
+	vkGetSwapchainImagesKHR(m_device, m_swapchain, &imageCount, nullptr);
+	m_swapchainImages.resize(imageCount);
+	vkGetSwapchainImagesKHR(m_device, m_swapchain, &imageCount, m_swapchainImages.data());
+	m_swapchainImageViews.resize(imageCount);
 
 	// create the swapchain image views
-	for (size_t i = 0; i < swapchainImages.size(); ++i)
+	for (size_t i = 0; i < m_swapchainImages.size(); ++i)
 	{
 		VkImageViewCreateInfo imgViewInfo
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image = swapchainImages[i],
+			.image = m_swapchainImages[i],
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
 			.format = SwapchainFormat,
 			.subresourceRange
@@ -755,7 +758,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 			}
 		};
 
-		if (vkCreateImageView(device, &imgViewInfo, nullptr, &swapchainImageViews[i]) != VK_SUCCESS)
+		if (vkCreateImageView(m_device, &imgViewInfo, nullptr, &m_swapchainImageViews[i]) != VK_SUCCESS)
 		{
 			showError("Error creating swapchain image view");
 			return false;
@@ -763,11 +766,11 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 	}
 
 	// semaphores used to signal render completion
-	renderCompleteSemaphores.resize(swapchainImages.size());
-	for (VkSemaphore &semaphore : renderCompleteSemaphores)
+	m_renderCompleteSemaphores.resize(m_swapchainImages.size());
+	for (VkSemaphore &semaphore : m_renderCompleteSemaphores)
 	{
 		VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS)
+		if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS)
 		{
 			showError("Error creating the render-complete semaphore");
 			return false;
@@ -780,7 +783,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = DepthFormat,
-		.extent{.width = swapchainWidth, .height = swapchainHeight, .depth = 1 },
+		.extent{.width = m_swapchainWidth, .height = m_swapchainHeight, .depth = 1 },
 		.mipLevels = 1,
 		.arrayLayers = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -794,7 +797,7 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 		.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
 		.usage = VMA_MEMORY_USAGE_AUTO
 	};
-	if (vmaCreateImage(vmaAllocator, &depthCreateInfo, &allocInfo, &depthImage, &depthImageAllocation, nullptr) != VK_SUCCESS)
+	if (vmaCreateImage(m_vmaAllocator, &depthCreateInfo, &allocInfo, &m_depthImage, &m_depthImageAllocation, nullptr) != VK_SUCCESS)
 	{
 		showError("Error allocating depth image");
 		return false;
@@ -803,12 +806,12 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 	VkImageViewCreateInfo depthImgViewInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.image = depthImage,
+		.image = m_depthImage,
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
 		.format = DepthFormat,
 		.subresourceRange{.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1}
 	};
-	if (vkCreateImageView(device, &depthImgViewInfo, nullptr, &depthImageView) != VK_SUCCESS)
+	if (vkCreateImageView(m_device, &depthImgViewInfo, nullptr, &m_depthImageView) != VK_SUCCESS)
 	{
 		showError("Error creating depth image view");
 		return false;
@@ -819,31 +822,31 @@ bool Application::createSwapchain(uint32_t width, uint32_t height)
 
 void Application::destroySwapchain()
 {
-	for (VkImageView swapchainImgView : swapchainImageViews)
+	for (VkImageView swapchainImgView : m_swapchainImageViews)
 	{
-		vkDestroyImageView(device, swapchainImgView, nullptr);
+		vkDestroyImageView(m_device, swapchainImgView, nullptr);
 	}
-	swapchainImageViews.clear();
+	m_swapchainImageViews.clear();
 
 	// destroy render-complete ssemaphores
-	for (VkSemaphore &semaphore : renderCompleteSemaphores)
+	for (VkSemaphore &semaphore : m_renderCompleteSemaphores)
 	{
-		vkDestroySemaphore(device, semaphore, nullptr);
+		vkDestroySemaphore(m_device, semaphore, nullptr);
 	}
-	renderCompleteSemaphores.clear();
+	m_renderCompleteSemaphores.clear();
 
-	if (swapchain)
+	if (m_swapchain)
 	{
-		vkDestroySwapchainKHR(device, swapchain, nullptr);
-		swapchain = nullptr;
+		vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+		m_swapchain = nullptr;
 	}
 
 	// destroy the depth buffer along with the swapchain
-	if (depthImageView)
+	if (m_depthImageView)
 	{
-		vkDestroyImageView(device, depthImageView, nullptr);
-		vmaDestroyImage(vmaAllocator, depthImage, depthImageAllocation);
-		depthImageView = nullptr;
+		vkDestroyImageView(m_device, m_depthImageView, nullptr);
+		vmaDestroyImage(m_vmaAllocator, m_depthImage, m_depthImageAllocation);
+		m_depthImageView = nullptr;
 	}
 }
 
@@ -882,7 +885,7 @@ VkShaderModule Application::createShaderModule(const std::string &fileName, shad
 		.pCode = spv.data()
 	};
 	VkShaderModule shaderModule = nullptr;
-	if (vkCreateShaderModule(device, &moduleCreateInfo, nullptr, &shaderModule) != VK_SUCCESS)
+	if (vkCreateShaderModule(m_device, &moduleCreateInfo, nullptr, &shaderModule) != VK_SUCCESS)
 	{
 		showError("Error creating shader module");
 		return nullptr;
@@ -893,11 +896,11 @@ VkShaderModule Application::createShaderModule(const std::string &fileName, shad
 bool Application::createShaders()
 {
 	// create the shader modules that we'll need for the graphics pipeline
-	if (vertShader = createShaderModule("shader.vert", shaderc_vertex_shader); !vertShader)
+	if (m_vertShader = createShaderModule("shader.vert", shaderc_vertex_shader); !m_vertShader)
 	{
 		return false;
 	}
-	if (fragShader = createShaderModule("shader.frag", shaderc_fragment_shader); !fragShader)
+	if (m_fragShader = createShaderModule("shader.frag", shaderc_fragment_shader); !m_fragShader)
 	{
 		return false;
 	}
@@ -912,7 +915,7 @@ VkPipeline Application::createGraphicsPipeline()
 									   .offset = 0,
 									   .size = sizeof(DrawConstants) };
 
-	std::array<VkDescriptorSetLayout, 1> dsLayouts{ globalDSLayout };
+	std::array<VkDescriptorSetLayout, 1> dsLayouts{ m_globalDSLayout };
 
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo
 	{
@@ -923,7 +926,7 @@ VkPipeline Application::createGraphicsPipeline()
 		.pPushConstantRanges = &pushConstRange
 	};
 
-	if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
+	if (vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS)
 	{
 		showError("Unable to create the pipeline layout");
 		return nullptr;
@@ -936,13 +939,13 @@ VkPipeline Application::createGraphicsPipeline()
 		{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 			.stage = VK_SHADER_STAGE_VERTEX_BIT,
-			.module = vertShader,
+			.module = m_vertShader,
 			.pName = entryPoint
 		},
 		{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
 			.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-			.module = fragShader,
+			.module = m_fragShader,
 			.pName = entryPoint
 		}
 	};
@@ -987,7 +990,7 @@ VkPipeline Application::createGraphicsPipeline()
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.cullMode = VK_CULL_MODE_BACK_BIT,
-		.frontFace = VK_FRONT_FACE_CLOCKWISE,
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.lineWidth = 1.0f,
 	};
 
@@ -1049,15 +1052,15 @@ VkPipeline Application::createGraphicsPipeline()
 		.pDepthStencilState = &depthStencilInfo,
 		.pColorBlendState = &blendInfo,
 		.pDynamicState = &dynamicStateInfo,
-		.layout = pipelineLayout,
+		.layout = m_pipelineLayout,
 		.renderPass = VK_NULL_HANDLE,
 	};
-	if (vkCreateGraphicsPipelines(device, nullptr, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
+	if (vkCreateGraphicsPipelines(m_device, nullptr, 1, &pipelineInfo, nullptr, &m_pipeline) != VK_SUCCESS)
 	{
 		showError("Error creating the pipeline");
 		return nullptr;
 	}
-	return pipeline;
+	return m_pipeline;
 }
 
 bool Application::createSyncResources()
@@ -1073,18 +1076,18 @@ bool Application::createSyncResources()
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
 		.pNext = &semaphoreTypeInfo
 	};
-	if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &timelineSemaphore) != VK_SUCCESS)
+	if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_timelineSemaphore) != VK_SUCCESS)
 	{
 		showError("Unable to create the timeline semaphore");
 		return false;
 	}
 
 	// per-frame image-acquire semaphores
-	for (FrameResources &res : frameResources)
+	for (FrameResources &res : m_frameResources)
 	{
 		// create the binary semaphores
 		VkSemaphoreCreateInfo semaphoreInfo{ .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-		if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &res.imageAcquiredSemaphore) != VK_SUCCESS)
+		if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &res.imageAcquiredSemaphore) != VK_SUCCESS)
 		{
 			showError("Error creating the per-frame image-acquire semaphore");
 			return false;
@@ -1100,23 +1103,23 @@ bool Application::createCommandBuffers()
 	VkCommandPoolCreateInfo poolInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.queueFamilyIndex = gfxQueueFamIdx
+		.queueFamilyIndex = m_gfxQueueFamIdx
 	};
-	if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS)
+	if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS)
 	{
 		showError("Unable to create command buffer pool");
 		return false;
 	}
 
-	for (FrameResources &res : frameResources)
+	for (FrameResources &res : m_frameResources)
 	{
 		// we'll give each frame its own pool, faster cmd buffer resets this way
 		VkCommandPoolCreateInfo poolInfo
 		{
 			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-			.queueFamilyIndex = gfxQueueFamIdx
+			.queueFamilyIndex = m_gfxQueueFamIdx
 		};
-		if (vkCreateCommandPool(device, &poolInfo, nullptr, &res.commandPool) != VK_SUCCESS)
+		if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &res.commandPool) != VK_SUCCESS)
 		{
 			showError("Unable to create command buffer pool");
 			return false;
@@ -1131,7 +1134,7 @@ bool Application::createCommandBuffers()
 			.commandBufferCount = 1,
 		};
 
-		if (vkAllocateCommandBuffers(device, &cmdAllocInfo, &res.commandBuffer) != VK_SUCCESS)
+		if (vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &res.commandBuffer) != VK_SUCCESS)
 		{
 			showError("Unable to allocate command buffer");
 			return false;
@@ -1143,47 +1146,47 @@ bool Application::createCommandBuffers()
 void Application::render()
 {
 	// first check if our swapchain is still valid
-	if (requireSwapchainRecreate)
+	if (m_requireSwapchainRecreate)
 	{
-		vkDeviceWaitIdle(device);
+		vkDeviceWaitIdle(m_device);
 		destroySwapchain();
-		createSwapchain(width, height);
-		requireSwapchainRecreate = false;
+		createSwapchain(m_width, m_height);
+		m_requireSwapchainRecreate = false;
 	}
 
-	const uint32_t frameResIndex = frameIndex++ % MaxFramesInFlight;
-	const uint64_t signalValue = nextSignalValue++;
+	const uint32_t frameResIndex = m_frameIndex++ % MaxFramesInFlight;
+	const uint64_t signalValue = m_nextSignalValue++;
 	const uint64_t waitValue = signalValue - MaxFramesInFlight;
 
 	VkSemaphoreWaitInfo waitInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
 		.semaphoreCount = 1,
-		.pSemaphores = &timelineSemaphore,
+		.pSemaphores = &m_timelineSemaphore,
 		.pValues = &waitValue
 	};
-	vkWaitSemaphores(device, &waitInfo, UINT64_MAX);
+	vkWaitSemaphores(m_device, &waitInfo, UINT64_MAX);
 
 	// now its safe to start recording commands
-	FrameResources &res = frameResources[frameResIndex];
-	vkResetCommandPool(device, res.commandPool, 0);
+	FrameResources &res = m_frameResources[frameResIndex];
+	vkResetCommandPool(m_device, res.commandPool, 0);
 
 	// get the resources for this frame
-	VkSemaphore imageAcquireSemaphore = frameResources[frameResIndex].imageAcquiredSemaphore;
+	VkSemaphore imageAcquireSemaphore = m_frameResources[frameResIndex].imageAcquiredSemaphore;
 
 	uint32_t imageIndex = 0;
-	VkResult acquireResult = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAcquireSemaphore, VK_NULL_HANDLE, &imageIndex);
+	VkResult acquireResult = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, imageAcquireSemaphore, VK_NULL_HANDLE, &imageIndex);
 
 	// handle resize and out-of-date images, may need swapchain recreate
 	if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
 	{
-		requireSwapchainRecreate = true;
+		m_requireSwapchainRecreate = true;
 		return;
 	}
 	else if (acquireResult == VK_SUBOPTIMAL_KHR)
 	{
 		// can render this frame, recreate next time around
-		requireSwapchainRecreate = true;
+		m_requireSwapchainRecreate = true;
 	}
 
 	// begin recording commands
@@ -1205,7 +1208,7 @@ void Application::render()
 			.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
 			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 			.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-			.image = swapchainImages[imageIndex],
+			.image = m_swapchainImages[imageIndex],
 			.subresourceRange
 			{
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1223,7 +1226,7 @@ void Application::render()
 			.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 			.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 			.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-			.image = depthImage,
+			.image = m_depthImage,
 			.subresourceRange
 			{
 				.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
@@ -1246,7 +1249,7 @@ void Application::render()
 	VkRenderingAttachmentInfo colorAttachInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-		.imageView = swapchainImageViews[imageIndex],
+		.imageView = m_swapchainImageViews[imageIndex],
 		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the image
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // keep data for presentation
@@ -1255,7 +1258,7 @@ void Application::render()
 	VkRenderingAttachmentInfo depthAttachInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-		.imageView = depthImageView,
+		.imageView = m_depthImageView,
 		.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the depth data
 		.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, // don't care after rendering
@@ -1267,7 +1270,7 @@ void Application::render()
 		.renderArea
 		{
 			.offset{.x = 0, .y = 0},
-			.extent{.width = swapchainWidth, .height = swapchainHeight}
+			.extent{.width = m_swapchainWidth, .height = m_swapchainHeight}
 		},
 		.layerCount = 1,
 		.colorAttachmentCount = 1,
@@ -1275,23 +1278,23 @@ void Application::render()
 		.pDepthAttachment = &depthAttachInfo
 	};
 
-	vkCmdBindDescriptorSets(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &globalDescSet, 0, nullptr);
+	vkCmdBindDescriptorSets(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_globalDescSet, 0, nullptr);
 
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
 	{
 		DrawConstants drawConsts;
 
-		GPUBuffer &materialBuffer = buffers[materialBufferId - 1];
+		GPUBuffer &materialBuffer = m_buffers[m_materialBufferId - 1];
 		drawConsts.materialBufferAddress = materialBuffer.deviceAddress;
 
 		// set the viewpot and scissor state
 		VkViewport viewport
 		{
 			.x = 0,
-			.y = static_cast<float>(swapchainHeight),
-			.width = static_cast<float>(swapchainWidth),
-			.height = -static_cast<float>(swapchainHeight),
+			.y = static_cast<float>(m_swapchainHeight),
+			.width = static_cast<float>(m_swapchainWidth),
+			.height = -static_cast<float>(m_swapchainHeight),
 			.minDepth = 0, .maxDepth = 1
 		};
 		vkCmdSetViewport(res.commandBuffer, 0, 1, &viewport);
@@ -1299,25 +1302,25 @@ void Application::render()
 		VkRect2D scissor
 		{
 			.offset{.x = 0, .y = 0 },
-			.extent{.width = swapchainWidth, .height = swapchainHeight}
+			.extent{.width = m_swapchainWidth, .height = m_swapchainHeight}
 		};
 		vkCmdSetScissor(res.commandBuffer, 0, 1, &scissor);
 
 		// draw our triangle
-		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
-		glm::vec3 camPosition = glm::vec3(cosf(camRotation), camElevation, sinf(camRotation)) * camDistance;
+		glm::vec3 camPosition = glm::vec3(cosf(m_camRotation), m_camElevation, sinf(m_camRotation)) * m_camDistance;
 
-		const float aspectRatio = width / static_cast<float>(height);
-		glm::mat4 matProj = glm::perspectiveLH(glm::radians(60.0f), aspectRatio, 0.1f, 100.0f);
-		glm::mat4 matView = glm::lookAtLH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+		const float aspectRatio = m_width / static_cast<float>(m_height);
+		glm::mat4 matProj = glm::perspectiveRH(glm::radians(85.0f), aspectRatio, 0.1f, 100.0f);
+		glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 		glm::mat4 matViewProj = matProj * matView;
 
 		// add root nodes to queue
 		std::vector<std::pair<uint32_t, glm::mat4>> nodeQueue;
 		nodeQueue.reserve(128);
 
-		for (uint32_t nodeId : rootNodes)
+		for (uint32_t nodeId : m_rootNodes)
 		{
 			nodeQueue.push_back({ nodeId, glm::mat4(1) });
 		}
@@ -1327,26 +1330,25 @@ void Application::render()
 			auto [nodeId, parentTransform] = nodeQueue.back();
 			nodeQueue.pop_back();
 
-			Node &node = nodeWorld.getNode(nodeId);
+			Node &node = m_nodeWorld.getNode(nodeId);
 			glm::mat4 matWorld = parentTransform * node.getTransform();
 			drawConsts.wvp = matViewProj * matWorld;
+			drawConsts.worldMatrix = matWorld;
 
 			// draw the associated mesh
 			if (node.meshId)
 			{
 				// look up the mesh and associated buffer
-				Mesh &mesh = meshes[node.meshId - 1];
-				GPUBuffer &vertBuffer = buffers[mesh.vertexBufferId - 1];
-				GPUBuffer &idxBuffer = buffers[mesh.indexBufferId - 1];
+				Mesh &mesh = m_meshes[node.meshId - 1];
+				GPUBuffer &vertBuffer = m_buffers[mesh.vertexBufferId - 1];
+				GPUBuffer &idxBuffer = m_buffers[mesh.indexBufferId - 1];
 				drawConsts.vertexBufferAddress = vertBuffer.deviceAddress;
 
 				vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
-
 				for (SubMesh &subMesh : mesh.subMeshes)
 				{
 					drawConsts.materialIndex = subMesh.materialId - 1;
-
-					vkCmdPushConstants(res.commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DrawConstants), &drawConsts);
+					vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DrawConstants), &drawConsts);
 					vkCmdDrawIndexed(res.commandBuffer, subMesh.indexCount, 1, subMesh.indexStart, subMesh.vertexStart, 0);
 				}
 			}
@@ -1355,7 +1357,7 @@ void Application::render()
 			uint32_t childNodeId = node.firstChildId;
 			while (childNodeId)
 			{
-				Node &child = nodeWorld.getNode(childNodeId);
+				Node &child = m_nodeWorld.getNode(childNodeId);
 				nodeQueue.push_back({ childNodeId, matWorld });
 				childNodeId = child.nextSiblingId;
 			}
@@ -1374,7 +1376,7 @@ void Application::render()
 		.dstAccessMask = 0,
 		.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-		.image = swapchainImages[imageIndex],
+		.image = m_swapchainImages[imageIndex],
 		.subresourceRange
 		{
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1406,12 +1408,12 @@ void Application::render()
 	{
 		{ // render work completion signal
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-			.semaphore = renderCompleteSemaphores[imageIndex],
+			.semaphore = m_renderCompleteSemaphores[imageIndex],
 			.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
 		},
 		{ // entire frame is completed (timeline)
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-			.semaphore = timelineSemaphore,
+			.semaphore = m_timelineSemaphore,
 			.value = signalValue,
 			.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
 		}
@@ -1431,20 +1433,20 @@ void Application::render()
 		.signalSemaphoreInfoCount = static_cast<uint32_t>(semaphoreSignals.size()),
 		.pSignalSemaphoreInfos = semaphoreSignals.data()
 	};
-	vkQueueSubmit2(gfxQueue, 1, &submitInfo, VK_NULL_HANDLE);
+	vkQueueSubmit2(m_gfxQueue, 1, &submitInfo, VK_NULL_HANDLE);
 
 	// present the image
 	VkPresentInfoKHR presentInfo{
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
 		.waitSemaphoreCount = 1,
-		.pWaitSemaphores = &renderCompleteSemaphores[imageIndex], // render work completed semaphore
+		.pWaitSemaphores = &m_renderCompleteSemaphores[imageIndex], // render work completed semaphore
 		.swapchainCount = 1,
-		.pSwapchains = &swapchain,
+		.pSwapchains = &m_swapchain,
 		.pImageIndices = &imageIndex,
 		.pResults = nullptr
 	};
 
-	vkQueuePresentKHR(gfxQueue, &presentInfo);
+	vkQueuePresentKHR(m_gfxQueue, &presentInfo);
 }
 
 //VkCommandBuffer Application::startTransientCommandBuffer()
@@ -1453,13 +1455,13 @@ void Application::render()
 //	VkCommandBufferAllocateInfo cmdAllocInfo
 //	{
 //		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-//		.commandPool = commandPool,
+//		.commandPool = m_commandPool,
 //		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 //		.commandBufferCount = 1,
 //	};
 //
 //	VkCommandBuffer commandBuffer = nullptr;
-//	if (vkAllocateCommandBuffers(device, &cmdAllocInfo, &commandBuffer) != VK_SUCCESS)
+//	if (vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &commandBuffer) != VK_SUCCESS)
 //	{
 //		showError("Unable to allocate command buffer");
 //		return nullptr;
@@ -1490,9 +1492,9 @@ void Application::render()
 //		.pCommandBuffers = &commandBuffer
 //	};
 //
-//	vkQueueSubmit(gfxQueue, 1, &submitInfo, nullptr);
-//	vkQueueWaitIdle(gfxQueue);
-//	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+//	vkQueueSubmit(m_gfxQueue, 1, &submitInfo, nullptr);
+//	vkQueueWaitIdle(m_gfxQueue);
+//	vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 //}
 
 std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels)
@@ -1514,7 +1516,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 	};
 	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_CPU_TO_GPU };
 	GPUTexture texture;
-	if (vmaCreateImage(vmaAllocator, &imageInfo, &allocInfo, &texture.image, &texture.allocation, nullptr) != VK_SUCCESS)
+	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &texture.image, &texture.allocation, nullptr) != VK_SUCCESS)
 	{
 		showError("Error creating image");
 		return { 0, GPUBuffer{} };
@@ -1533,7 +1535,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 			.layerCount = 1
 		}
 	};
-	if (vkCreateImageView(device, &imgViewInfo, nullptr, &texture.imageView) != VK_SUCCESS)
+	if (vkCreateImageView(m_device, &imgViewInfo, nullptr, &texture.imageView) != VK_SUCCESS)
 	{
 		showError("Error creating image view");
 		return { 0, GPUBuffer{} };
@@ -1606,8 +1608,8 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 	};
 	vkCmdPipelineBarrier2(commandBuffer, &shaderReadDepInfo);
 
-	textures.push_back(texture);
-	const uint32_t textureId = textures.size();
+	m_textures.push_back(texture);
+	const uint32_t textureId = m_textures.size();
 	return { textureId, stageBuff };
 	/*
 	// ensure the image is in shader-read-optimal layout
@@ -1619,7 +1621,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 		.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
 	};
-	if (!vkTransitionImageLayout(device, 1, &transition))
+	if (!vkTransitionImageLayout(m_device, 1, &transition))
 	{
 		showError("Error transitioning GPU image");
 		return 0;
@@ -1640,7 +1642,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 		.regionCount = 1,
 		.pRegions = &memCopy
 	};
-	if (vkCopyMemoryToImage(device, &copyInfo) != VK_SUCCESS)
+	if (vkCopyMemoryToImage(m_device, &copyInfo) != VK_SUCCESS)
 	{
 		showError("Error copying image data");
 		return 0;
@@ -1659,7 +1661,7 @@ bool Application::createDescriptorSets()
 										.maxSets = 1,
 										.poolSizeCount = poolSizes.size(),
 										.pPoolSizes = poolSizes.data() };
-	if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descPool) != VK_SUCCESS)
+	if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descPool) != VK_SUCCESS)
 	{
 		showError("Unable to create descriptor pool");
 		return false;
@@ -1686,7 +1688,7 @@ bool Application::createDescriptorSets()
 												   .bindingCount = bindings.size(),
 												   .pBindings = bindings.data() };
 
-		if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &globalDSLayout) != VK_SUCCESS)
+		if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_globalDSLayout) != VK_SUCCESS)
 		{
 			showError("Unable to create descriptor set layout");
 			return false;
@@ -1695,11 +1697,11 @@ bool Application::createDescriptorSets()
 		// create the actual descriptor sets
 		VkDescriptorSetAllocateInfo descSetAllocInfo{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = descPool,
+			.descriptorPool = m_descPool,
 			.descriptorSetCount = 1,
-			.pSetLayouts = &globalDSLayout,
+			.pSetLayouts = &m_globalDSLayout,
 		};
-		if (vkAllocateDescriptorSets(device, &descSetAllocInfo, &globalDescSet) != VK_SUCCESS)
+		if (vkAllocateDescriptorSets(m_device, &descSetAllocInfo, &m_globalDescSet) != VK_SUCCESS)
 		{
 			showError("Unable to allocate descriptor set");
 			return false;
@@ -1725,20 +1727,20 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, v
 		.usage = VMA_MEMORY_USAGE_AUTO
 	};
 	GPUBuffer gpuBuff;
-	if (vmaCreateBuffer(vmaAllocator, &buffInfo, &allocInfo, &gpuBuff.vkBuffer, &gpuBuff.allocation, nullptr) != VK_SUCCESS)
+	if (vmaCreateBuffer(m_vmaAllocator, &buffInfo, &allocInfo, &gpuBuff.vkBuffer, &gpuBuff.allocation, nullptr) != VK_SUCCESS)
 	{
 		return GPUBuffer{};
 	}
 
 	// map and write buffer data
 	void *buffPtr = nullptr;
-	if (vmaMapMemory(vmaAllocator, gpuBuff.allocation, &buffPtr) != VK_SUCCESS)
+	if (vmaMapMemory(m_vmaAllocator, gpuBuff.allocation, &buffPtr) != VK_SUCCESS)
 	{
-		vmaDestroyBuffer(vmaAllocator, gpuBuff.vkBuffer, gpuBuff.allocation);
+		vmaDestroyBuffer(m_vmaAllocator, gpuBuff.vkBuffer, gpuBuff.allocation);
 		return GPUBuffer{};
 	}
 	std::memcpy(static_cast<char *>(buffPtr), initData, buffInfo.size);
-	vmaUnmapMemory(vmaAllocator, gpuBuff.allocation);
+	vmaUnmapMemory(m_vmaAllocator, gpuBuff.allocation);
 
 	// BDA Send Device Pointer
 	VkBufferDeviceAddressInfo vertBdaInfo
@@ -1746,26 +1748,26 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, v
 		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
 		.buffer = gpuBuff.vkBuffer
 	};
-	gpuBuff.deviceAddress = vkGetBufferDeviceAddress(device, &vertBdaInfo);
+	gpuBuff.deviceAddress = vkGetBufferDeviceAddress(m_device, &vertBdaInfo);
 
 	return gpuBuff;
 }
 
 uint32_t Application::addBuffer(const GPUBuffer &buffer)
 {
-	buffers.push_back(buffer);
-	uint32_t bufferId = buffers.size();
+	m_buffers.push_back(buffer);
+	uint32_t bufferId = m_buffers.size();
 	return bufferId;
 }
 
 uint32_t Application::createMaterial(GPUMaterial &&gpuMat)
 {
-	materials.push_back(std::move(gpuMat));
-	return materials.size();
+	m_materials.push_back(std::move(gpuMat));
+	return m_materials.size();
 }
 
 uint32_t Application::addMesh(Mesh &&mesh)
 {
-	meshes.push_back(std::move(mesh));
-	return meshes.size();
+	m_meshes.push_back(std::move(mesh));
+	return m_meshes.size();
 }
