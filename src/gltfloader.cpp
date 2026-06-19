@@ -40,7 +40,8 @@ bool parseModel(const std::string &filePath, tg3_model &model)
 	return true;
 }
 
-bool importResources(const std::string &filePath, const tg3_model &model, ImportedResources &resources)
+bool importResources(const std::string &filePath, const tg3_model &model, std::vector<Vertex> &vertices,
+	std::vector<uint32_t> &indices, size_t vertBufferOffset, size_t idxBufferOffset, ImportedResources &resources)
 {
 	std::filesystem::path path(filePath);
 
@@ -75,18 +76,9 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 	}
 
 	// import meshes
+	size_t vertexOffset = vertBufferOffset;
+	size_t indexOffset = idxBufferOffset;
 	resources.meshes.resize(model.meshes_count);
-	size_t totalVertices = 0;
-	size_t totalIndices = 0;
-
-	// total primitive count for geo buffers
-	uint32_t totalPrimitives = 0;
-	for (int i = 0; i < model.meshes_count; ++i)
-	{
-		totalPrimitives += model.meshes[i].primitives_count;
-	}
-	std::vector<std::pair<std::vector<Vertex>, std::vector<uint32_t>>> primitiveData(totalPrimitives);
-	int primIdx = 0;
 
 	// load all gltf mesh and primitive data
 	for (int i = 0; i < model.meshes_count; ++i)
@@ -100,9 +92,6 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 		for (int j = 0; j < tg3mesh->primitives_count; ++j)
 		{
 			const tg3_primitive *primitive = &tg3mesh->primitives[j];
-			std::vector<Vertex> &vertices = primitiveData[primIdx].first;
-			std::vector<uint32_t> &indices = primitiveData[primIdx].second;
-			primIdx++;
 			mesh.subMeshes[j].materialId = primitive->material;
 
 			// first look up the positions accessor to get vertex positions and total vertex count
@@ -117,16 +106,14 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 
 					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
 					{
-						vertices.resize(accessor->count);
-						mesh.subMeshes[j].vertexStart = totalVertices;
+						mesh.subMeshes[j].vertexStart = vertexOffset;
 						mesh.subMeshes[j].vertexCount = accessor->count;
-						totalVertices += accessor->count;
 
 						const float *positions = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
 						for (uint64_t idx = 0; idx < accessor->count; ++idx)
 						{
-							vertices[idx].position = glm::vec3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
-							vertices[idx].color = glm::vec4(1, 1, 1, 1);
+							vertices[vertexOffset + idx].position = glm::vec3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
+							vertices[vertexOffset + idx].color = glm::vec4(1, 1, 1, 1);
 						}
 					}
 				}
@@ -147,7 +134,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 						const float *normals = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
 						for (uint64_t idx = 0; idx < accessor->count; ++idx)
 						{
-							vertices[idx].normal = glm::vec3(normals[idx * 3], normals[idx * 3 + 1], normals[idx * 3 + 2]);
+							vertices[vertexOffset + idx].normal = glm::vec3(normals[idx * 3], normals[idx * 3 + 1], normals[idx * 3 + 2]);
 						}
 					}
 				}
@@ -162,7 +149,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 						const float *colors = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
 						for (uint64_t idx = 0; idx < accessor->count; ++idx)
 						{
-							vertices[idx].color = glm::vec3(colors[idx * 3], colors[idx * 3 + 1], colors[idx * 3 + 2]);
+							vertices[vertexOffset + idx].color = glm::vec3(colors[idx * 3], colors[idx * 3 + 1], colors[idx * 3 + 2]);
 						}
 					}
 				}
@@ -177,7 +164,7 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 						const float *uvs = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
 						for (uint64_t idx = 0; idx < accessor->count; ++idx)
 						{
-							vertices[idx].uv = glm::vec2(uvs[idx * 2], uvs[idx * 2 + 1]);
+							vertices[vertexOffset + idx].uv = glm::vec2(uvs[idx * 2], uvs[idx * 2 + 1]);
 						}
 					}
 				}
@@ -189,41 +176,28 @@ bool importResources(const std::string &filePath, const tg3_model &model, Import
 				const tg3_accessor *accessor = &model.accessors[primitive->indices];
 				const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
 				const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-				mesh.subMeshes[j].indexStart = totalIndices;
+				mesh.subMeshes[j].indexStart = indexOffset;
 				mesh.subMeshes[j].indexCount = accessor->count;
-				totalIndices += accessor->count;
-				indices.resize(accessor->count);
 
 				if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_INT)
 				{
 					const uint32_t *buffData = reinterpret_cast<const uint32_t *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
-					memcpy(indices.data(), buffData, accessor->count * sizeof(uint32_t));
+					memcpy(&indices[indexOffset], buffData, accessor->count * sizeof(uint32_t));
 				}
 				else if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_SHORT)
 				{
 					const uint16_t *buffData = reinterpret_cast<const uint16_t *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
 					for (uint64_t idx = 0; idx < accessor->count; ++idx)
 					{
-						indices[idx] = static_cast<uint32_t>(buffData[idx]);
+						indices[indexOffset + idx] = static_cast<uint32_t>(buffData[idx]);
 					}
 				}
 			}
+			vertexOffset += mesh.subMeshes[j].vertexCount;
+			indexOffset += mesh.subMeshes[j].indexCount;
 		}
 	}
 
-	// flatten all the vertex data
-	resources.vertices.resize(totalVertices);
-	resources.indices.resize(totalIndices);
-
-	size_t vertOffset = 0;
-	size_t indexOffset = 0;
-	for (auto &prim : primitiveData)
-	{
-		std::copy(prim.first.begin(), prim.first.end(), resources.vertices.begin() + vertOffset);
-		std::copy(prim.second.begin(), prim.second.end(), resources.indices.begin() + indexOffset);
-		vertOffset += prim.first.size();
-		indexOffset += prim.second.size();
-	}
 	return true;
 }
 

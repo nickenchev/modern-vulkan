@@ -112,8 +112,14 @@ class Application
 
 	// cpu resources
 	std::vector<Mesh> m_meshes;
+	std::vector<Vertex> m_vertices;
+	std::vector<uint32_t> m_indices;
+	size_t m_vertOffset = 0;
+	size_t m_idxOffset = 0;
 
 	// gpu resources
+	uint32_t m_vertexBufferId = 0;
+	uint32_t m_indexBufferId = 0;
 	VkSampler m_sampler = nullptr;
 	std::vector<GPUTexture> m_textures;
 	std::vector<GPUBuffer> m_buffers;

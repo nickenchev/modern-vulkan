@@ -15,8 +15,6 @@ struct Vertex
 
 struct Mesh
 {
-	uint32_t vertexBufferId = 0;
-	uint32_t indexBufferId = 0;
 	std::string name;
 	std::vector<SubMesh> subMeshes;
 };

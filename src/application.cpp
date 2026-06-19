@@ -46,9 +46,36 @@ bool Application::loadData()
 		return false;
 	}
 
+	// preallocate memory for all vertices and indices
+	const size_t totalVerts = (32 * 1024 * 1024) / sizeof(Vertex);
+	const size_t totalIndices = (32 * 1024 * 1024) / sizeof(uint32_t);
+	m_vertices.resize(totalVerts);
+	m_indices.resize(totalIndices);
+
 	// imported images, materials, meshes, etc
 	ImportedResources importedRes;
-	importResources(filePath, model, importedRes);
+	importResources(filePath, model, m_vertices, m_indices, m_vertOffset, m_idxOffset, importedRes);
+
+	// upload geo data and get buffer Ids
+	const size_t vertBufferSize = m_vertices.size() * sizeof(Vertex);
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertBufferSize, m_vertices.data());
+	if (!vertexBuffer.vkBuffer)
+	{
+		showError("Error creating vertex buffer");
+		tg3_model_free(&model);
+		return false;
+	}
+	m_vertexBufferId = addBuffer(vertexBuffer);
+
+	const size_t indexBufferSize = m_indices.size() * sizeof(uint32_t);
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferSize, m_indices.data());
+	if (!indexBuffer.vkBuffer)
+	{
+		showError("Error creating index buffer");
+		tg3_model_free(&model);
+		return false;
+	}
+	m_indexBufferId = addBuffer(indexBuffer);
 
 	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
 	std::vector<GPUBuffer> stagingBuffers;
@@ -128,35 +155,11 @@ bool Application::loadData()
 	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matBufferSize, m_materials.data());
 	m_materialBufferId = addBuffer(matBuffer);
 
-	// upload geo data and get buffer Ids
-	const size_t vertBufferSize = importedRes.vertices.size() * sizeof(Vertex);
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertBufferSize, importedRes.vertices.data());
-	if (!vertexBuffer.vkBuffer)
-	{
-		showError("Error creating vertex buffer");
-		tg3_model_free(&model);
-		return false;
-	}
-	uint32_t vertexBufferId = addBuffer(vertexBuffer);
-
-	const size_t indexBufferSize = importedRes.indices.size() * sizeof(uint32_t);
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferSize, importedRes.indices.data());
-	if (!indexBuffer.vkBuffer)
-	{
-		showError("Error creating index buffer");
-		tg3_model_free(&model);
-		return false;
-	}
-	uint32_t indexBufferId = addBuffer(indexBuffer);
-
-	// mapping gltf material indices to material IDs
+	// map gltf material indices to material IDs
 	std::vector<uint32_t> meshIds(importedRes.meshes.size());
 	for (int i = 0; i < importedRes.meshes.size(); ++i)
 	{
 		Mesh &mesh = importedRes.meshes[i];
-		mesh.vertexBufferId = vertexBufferId;
-		mesh.indexBufferId = indexBufferId;
-
 		// map gltf material index to loaded material ID
 		for (SubMesh &subMesh : mesh.subMeshes)
 		{
@@ -1280,11 +1283,17 @@ void Application::render()
 
 	vkCmdBindDescriptorSets(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_globalDescSet, 0, nullptr);
 
+	// setup frame data
+	DrawConstants drawConsts;
+	GPUBuffer &vertBuffer = m_buffers[m_vertexBufferId - 1];
+	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
+	drawConsts.vertexBufferAddress = vertBuffer.deviceAddress;
+
+	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
+
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
 	{
-		DrawConstants drawConsts;
-
 		GPUBuffer &materialBuffer = m_buffers[m_materialBufferId - 1];
 		drawConsts.materialBufferAddress = materialBuffer.deviceAddress;
 
@@ -1340,11 +1349,6 @@ void Application::render()
 			{
 				// look up the mesh and associated buffer
 				Mesh &mesh = m_meshes[node.meshId - 1];
-				GPUBuffer &vertBuffer = m_buffers[mesh.vertexBufferId - 1];
-				GPUBuffer &idxBuffer = m_buffers[mesh.indexBufferId - 1];
-				drawConsts.vertexBufferAddress = vertBuffer.deviceAddress;
-
-				vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 				for (SubMesh &subMesh : mesh.subMeshes)
 				{
 					drawConsts.materialIndex = subMesh.materialId - 1;
