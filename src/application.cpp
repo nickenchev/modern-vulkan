@@ -39,7 +39,7 @@ bool Application::initialize()
 
 bool Application::loadData()
 {
-	// preallocate memory for vertices and indices
+	// preallocate mem for vertex and index data
 	constexpr size_t vertexBufferBytes = 32 * 1024 * 1024; // 32MB vertex budget
 	constexpr size_t indexBufferBytes = 32 * 1024 * 1024; // 32MB index budget
 	constexpr size_t totalVerts = vertexBufferBytes / sizeof(Vertex);
@@ -47,9 +47,8 @@ bool Application::loadData()
 	m_vertices.resize(totalVerts);
 	m_indices.resize(totalIndices);
 
-	// create GPU-side geo buffers
+	// create GPU-side buffers
 	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexBufferBytes);
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferBytes);
 	if (!vertexBuffer.vkBuffer)
 	{
 		showError("Error creating vertex buffer");
@@ -57,6 +56,7 @@ bool Application::loadData()
 	}
 	m_vertexBufferId = addBuffer(vertexBuffer);
 
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferBytes);
 	if (!indexBuffer.vkBuffer)
 	{
 		showError("Error creating index buffer");
@@ -64,7 +64,7 @@ bool Application::loadData()
 	}
 	m_indexBufferId = addBuffer(indexBuffer);
 
-	// fallback texture in case of no base color texture
+	// fallback texture base color texture (0-index in tex array)
 	uint32_t whitePixelData = 0xFFFFFFFF; // RGBA
 	std::vector<Image> whitePixel{
 		Image
@@ -77,42 +77,28 @@ bool Application::loadData()
 	};
 	std::vector<uint32_t> whiteImageId = uploadImages(whitePixel);
 
-	std::string gltfPath = "D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf";
-	gltfPath = "D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf";
-	//gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
+	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "D:/gltf Models/barn/scene.gltf";
 	//gltfPath = "D:/gltf Models/dark_sci-fi_hallway/scene.gltf";
-	loadGltf(gltfPath);
+	loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
+	loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 
-	// update the texture descriptors
-	std::vector<VkDescriptorImageInfo> descriptorWrites;
-	descriptorWrites.reserve(m_textures.size());
-	for (Texture &texture : m_textures)
-	{
-		descriptorWrites.push_back({
-			.sampler = m_samplers[texture.samplerId - 1],
-			.imageView = m_images[texture.imageId - 1].imageView,
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
-	}
-	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-								.dstSet = m_globalDescSet,
-								.dstBinding = 0,
-								.dstArrayElement = 0,
-								.descriptorCount = static_cast<uint32_t>(descriptorWrites.size()),
-								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-								.pImageInfo = descriptorWrites.data() };
-	vkUpdateDescriptorSets(m_device, 1, &descWrites, 0, nullptr);
+	updateTextureDescriptors();
 
-	// upload materials to the GPU
-	const size_t matDataSize = m_materials.size() * sizeof(Material);
-	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matDataSize);
-	m_materialBufferId = addBuffer(matBuffer);
-	uploadBufferData(matBuffer, 0, m_materials.data(), matDataSize);
-
-	// upload geo data and get buffer Ids
+	// upload data to GPU
 	uploadBufferData(vertexBuffer, 0, m_vertices.data(), vertexBufferBytes);
 	uploadBufferData(indexBuffer, 0, m_indices.data(), indexBufferBytes);
 
+	// upload materials to the GPU
+	const size_t matDataBytes = m_materials.size() * sizeof(Material);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matDataBytes);
+	if (!matBuffer.vkBuffer)
+	{
+		showError("Error creating material buffer");
+		return false;
+	}
+	m_matBufferId = addBuffer(matBuffer);
+	uploadBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
 
 	return true;
 }
@@ -255,6 +241,7 @@ void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
 
 void Application::loadGltf(const std::string &filepath)
 {
+	std::print("Loading GLTF at {}\n", filepath);
 	// load and parse GLTF
 	tg3_model model;
 	if (!parseModel(filepath, model))
@@ -284,6 +271,7 @@ void Application::loadGltf(const std::string &filepath)
 	}
 
 	tg3_model_free(&model);
+	std::print("GLTF Loading Successful\n\n");
 }
 
 void Application::shutdown()
@@ -1347,7 +1335,7 @@ void Application::render()
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
 	{
-		GPUBuffer &materialBuffer = m_buffers[m_materialBufferId - 1];
+		GPUBuffer &materialBuffer = m_buffers[m_matBufferId - 1];
 		drawConsts.materialBufferAddress = materialBuffer.deviceAddress;
 
 		// set the viewpot and scissor state
@@ -1707,6 +1695,28 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 		return 0;
 	}
 	*/
+}
+
+void Application::updateTextureDescriptors() const
+{
+	// update the texture descriptors
+	std::vector<VkDescriptorImageInfo> descriptorWrites;
+	descriptorWrites.reserve(m_textures.size());
+	for (const Texture &texture : m_textures)
+	{
+		descriptorWrites.push_back({
+			.sampler = m_samplers[texture.samplerId - 1],
+			.imageView = m_images[texture.imageId - 1].imageView,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+	}
+	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+								.dstSet = m_globalDescSet,
+								.dstBinding = 0,
+								.dstArrayElement = 0,
+								.descriptorCount = static_cast<uint32_t>(descriptorWrites.size()),
+								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.pImageInfo = descriptorWrites.data() };
+	vkUpdateDescriptorSets(m_device, 1, &descWrites, 0, nullptr);
 }
 
 std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds)

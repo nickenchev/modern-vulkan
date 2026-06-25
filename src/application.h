@@ -128,12 +128,12 @@ class Application
 	// gpu resources
 	uint32_t m_vertexBufferId = 0;
 	uint32_t m_indexBufferId = 0;
+	uint32_t m_matBufferId = 0;
 	std::vector<GPUImage> m_images;
 	std::vector<VkSampler> m_samplers;
 	std::vector<Texture> m_textures;
 	std::vector<GPUBuffer> m_buffers;
 	std::vector<Material> m_materials;
-	uint32_t m_materialBufferId = 0;
 
 	// descriptors
 	VkDescriptorSetLayout m_globalDSLayout = nullptr;
@@ -180,6 +180,7 @@ class Application
 
 	std::vector<uint32_t> uploadImages(const std::vector<Image> &images);
 	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
+	void updateTextureDescriptors() const;
 
 	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize);
 	void uploadBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
