@@ -12,8 +12,9 @@ struct ImportedResources
 {
 	bool success = false;
 	std::vector<Image> images;
-	std::vector<Material> materials;
 	std::vector<Mesh> meshes;
+	size_t vertexCount = 0;
+	size_t indexCount = 0;
 };
 
 bool parseModel(const std::string &filePath, tg3_model &model);

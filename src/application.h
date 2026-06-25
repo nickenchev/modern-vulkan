@@ -6,6 +6,7 @@
 #include <vulkan/vulkan.h>
 #include <vector>
 #include <array>
+#include <filesystem>
 #include <shaderc/shaderc.hpp>
 
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -20,6 +21,7 @@ struct VmaAllocator_T;
 typedef struct VmaAllocator_T* VmaAllocator;
 struct VmaAllocation_T;
 typedef struct VmaAllocation_T* VmaAllocation;
+struct tg3_model;
 
 struct DrawConstants
 {
@@ -27,7 +29,7 @@ struct DrawConstants
 	glm::mat4 worldMatrix;
 	uint64_t vertexBufferAddress = 0;
 	uint64_t materialBufferAddress = 0;
-	uint32_t materialIndex;
+	uint32_t materialIndex = 0;
 };
 
 struct FrameResources
@@ -38,7 +40,7 @@ struct FrameResources
 	VkDescriptorSet descSet = nullptr;
 };
 
-struct GPUTexture
+struct GPUImage
 {
 	VkImage image = nullptr;
 	VkImageView imageView = nullptr;
@@ -52,10 +54,16 @@ struct GPUBuffer
 	VmaAllocation allocation = nullptr;
 };
 
-struct GPUMaterial
+struct Material
 {
-	glm::vec4 baseColor;
-	uint32_t textureId;
+	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
+	uint32_t textureIndex = 0;
+};
+
+struct Texture
+{
+	uint32_t imageId = 0;
+	uint32_t samplerId = 0;
 };
 
 class Application
@@ -120,10 +128,11 @@ class Application
 	// gpu resources
 	uint32_t m_vertexBufferId = 0;
 	uint32_t m_indexBufferId = 0;
-	VkSampler m_sampler = nullptr;
-	std::vector<GPUTexture> m_textures;
+	std::vector<GPUImage> m_images;
+	std::vector<VkSampler> m_samplers;
+	std::vector<Texture> m_textures;
 	std::vector<GPUBuffer> m_buffers;
-	std::vector<GPUMaterial> m_materials;
+	std::vector<Material> m_materials;
 	uint32_t m_materialBufferId = 0;
 
 	// descriptors
@@ -157,12 +166,25 @@ class Application
 	bool createCommandBuffers();
 	bool createDescriptorSets();
 	void render();
+
 	VkCommandBuffer startTransientCommandBuffer();
 	void submitTransientCommandBuffer(VkCommandBuffer commandBuffer);
-	std::pair<uint32_t, GPUBuffer> createTexture(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
-	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, void *initData);
+
+	void loadGltf(const std::string &filepath);
+
+	std::vector<Image> loadImages(const tg3_model &model, const std::filesystem::path &imageDir);
+	std::vector<uint32_t> loadSamplers(const tg3_model &model);
+	std::vector<uint32_t> loadTextures(const tg3_model &model, const std::vector<uint32_t> &imageIds, const std::vector<uint32_t> &samplerIds);
+	std::vector<uint32_t> loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds);
+	std::vector<uint32_t> loadMeshes(const tg3_model &model, const std::vector<uint32_t> &materialIds);
+
+	std::vector<uint32_t> uploadImages(const std::vector<Image> &images);
+	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
+
+	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize);
+	void uploadBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
 	uint32_t addBuffer(const GPUBuffer &buffer);
-	uint32_t createMaterial(GPUMaterial &&gpuMat);
+	uint32_t createMaterial(Material &&gpuMat);
 	uint32_t addMesh(Mesh &&mesh);
 	uint32_t createNode(Node &&node);
 

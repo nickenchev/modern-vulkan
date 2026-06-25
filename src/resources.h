@@ -35,9 +35,3 @@ struct Image
 	int channels;
 	unsigned char *data;
 };
-
-struct Material
-{
-	glm::vec4 baseColor;
-	uint32_t baseColorTextureIndex;
-};

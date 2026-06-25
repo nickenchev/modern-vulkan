@@ -43,38 +43,6 @@ bool parseModel(const std::string &filePath, tg3_model &model)
 bool importResources(const std::string &filePath, const tg3_model &model, std::vector<Vertex> &vertices,
 	std::vector<uint32_t> &indices, size_t vertBufferOffset, size_t idxBufferOffset, ImportedResources &resources)
 {
-	std::filesystem::path path(filePath);
-
-	// import source textures
-	resources.images.resize(model.images_count);
-	for (int i = 0; i < model.images_count; ++i)
-	{
-		Image &img = resources.images[i];
-		std::filesystem::path imagePath = path.parent_path() / model.images[i].uri.data;
-		std::print("Loading image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
-		img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
-	}
-
-	// import materials
-	resources.materials.resize(model.materials_count);
-	for (int i = 0; i < model.materials_count; ++i)
-	{
-		Material &mat = resources.materials[i];
-		const tg3_material *tg3mat = &model.materials[i];
-		mat.baseColor = glm::vec4(
-			tg3mat->pbr_metallic_roughness.base_color_factor[0],
-			tg3mat->pbr_metallic_roughness.base_color_factor[1],
-			tg3mat->pbr_metallic_roughness.base_color_factor[2],
-			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
-
-		// check for a albedo texture map
-		if (tg3mat->pbr_metallic_roughness.base_color_texture.index != -1)
-		{
-			const tg3_texture *tex = &model.textures[tg3mat->pbr_metallic_roughness.base_color_texture.index];
-			mat.baseColorTextureIndex = tex->source; // source is an index into the gltf images list
-		}
-	}
-
 	// import meshes
 	size_t vertexOffset = vertBufferOffset;
 	size_t indexOffset = idxBufferOffset;
@@ -108,6 +76,12 @@ bool importResources(const std::string &filePath, const tg3_model &model, std::v
 					{
 						mesh.subMeshes[j].vertexStart = vertexOffset;
 						mesh.subMeshes[j].vertexCount = accessor->count;
+						// ensure vertex buffer has enough space
+						if (vertBufferOffset + accessor->count > vertices.size())
+						{
+							return false;
+						}
+						resources.vertexCount += accessor->count;
 
 						const float *positions = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
 						for (uint64_t idx = 0; idx < accessor->count; ++idx)
@@ -178,6 +152,12 @@ bool importResources(const std::string &filePath, const tg3_model &model, std::v
 				const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
 				mesh.subMeshes[j].indexStart = indexOffset;
 				mesh.subMeshes[j].indexCount = accessor->count;
+				// ensure index buffer has enough space
+				if (indexOffset + accessor->count > indices.size())
+				{
+					return false;
+				}
+				resources.indexCount += accessor->count;
 
 				if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_INT)
 				{

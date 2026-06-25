@@ -30,7 +30,7 @@ layout(buffer_reference, scalar) readonly buffer VertexPtr
 struct Material
 {
     vec4 baseColor;
-    uint colorTextureId;
+    uint colorTextureIndex;
 };
 
 layout(buffer_reference, scalar) readonly buffer MaterialPtr
@@ -49,7 +49,7 @@ void main()
     Vertex v = vBuffer.vertices[gl_VertexIndex];
 
     MaterialPtr matBuff = MaterialPtr(drawConsts.materialAddress);
-    outTextureIndex = matBuff.materials[drawConsts.materialIndex].colorTextureId - 1;
+    outTextureIndex = matBuff.materials[drawConsts.materialIndex].colorTextureIndex;
 
     gl_Position = drawConsts.wvp * vec4(v.position, 1.0);
     outColor = v.color;

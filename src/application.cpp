@@ -8,6 +8,10 @@
 #include <vma/vk_mem_alloc.h>
 
 #include <iostream>
+#include <print>
+#include <tiny_gltf_v3.h>
+#include <stb_image.h>
+
 #include "gltfloader.h"
 
 void Application::showError(const std::string &errorMessasge) const
@@ -35,64 +39,157 @@ bool Application::initialize()
 
 bool Application::loadData()
 {
-	std::string filePath = "D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf";
-	filePath = "D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf";
-	//filePath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
-	//filePath = "D:/gltf Models/barn/scene.gltf";
-	filePath = "D:/gltf Models/dark_sci-fi_hallway/scene.gltf";
-	tg3_model model;
-	if (!parseModel(filePath, model))
-	{
-		return false;
-	}
-
-	// preallocate memory for all vertices and indices
-	const size_t totalVerts = (32 * 1024 * 1024) / sizeof(Vertex);
-	const size_t totalIndices = (32 * 1024 * 1024) / sizeof(uint32_t);
+	// preallocate memory for vertices and indices
+	constexpr size_t vertexBufferBytes = 32 * 1024 * 1024; // 32MB vertex budget
+	constexpr size_t indexBufferBytes = 32 * 1024 * 1024; // 32MB index budget
+	constexpr size_t totalVerts = vertexBufferBytes / sizeof(Vertex);
+	constexpr size_t totalIndices = indexBufferBytes / sizeof(uint32_t);
 	m_vertices.resize(totalVerts);
 	m_indices.resize(totalIndices);
 
-	// imported images, materials, meshes, etc
-	ImportedResources importedRes;
-	importResources(filePath, model, m_vertices, m_indices, m_vertOffset, m_idxOffset, importedRes);
-
-	// upload geo data and get buffer Ids
-	const size_t vertBufferSize = m_vertices.size() * sizeof(Vertex);
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertBufferSize, m_vertices.data());
+	// create GPU-side geo buffers
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexBufferBytes);
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferBytes);
 	if (!vertexBuffer.vkBuffer)
 	{
 		showError("Error creating vertex buffer");
-		tg3_model_free(&model);
 		return false;
 	}
 	m_vertexBufferId = addBuffer(vertexBuffer);
 
-	const size_t indexBufferSize = m_indices.size() * sizeof(uint32_t);
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferSize, m_indices.data());
 	if (!indexBuffer.vkBuffer)
 	{
 		showError("Error creating index buffer");
-		tg3_model_free(&model);
 		return false;
 	}
 	m_indexBufferId = addBuffer(indexBuffer);
 
+	// fallback texture in case of no base color texture
+	uint32_t whitePixelData = 0xFFFFFFFF; // RGBA
+	std::vector<Image> whitePixel{
+		Image
+		{
+			.width = 1,
+			.height = 1,
+			.channels = 4,
+			.data = reinterpret_cast<unsigned char *>(&whitePixelData),
+		}
+	};
+	std::vector<uint32_t> whiteImageId = uploadImages(whitePixel);
+
+	std::string gltfPath = "D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf";
+	gltfPath = "D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf";
+	//gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
+	//gltfPath = "D:/gltf Models/barn/scene.gltf";
+	//gltfPath = "D:/gltf Models/dark_sci-fi_hallway/scene.gltf";
+	loadGltf(gltfPath);
+
+	// update the texture descriptors
+	std::vector<VkDescriptorImageInfo> descriptorWrites;
+	descriptorWrites.reserve(m_textures.size());
+	for (Texture &texture : m_textures)
+	{
+		descriptorWrites.push_back({
+			.sampler = m_samplers[texture.samplerId - 1],
+			.imageView = m_images[texture.imageId - 1].imageView,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+	}
+	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+								.dstSet = m_globalDescSet,
+								.dstBinding = 0,
+								.dstArrayElement = 0,
+								.descriptorCount = static_cast<uint32_t>(descriptorWrites.size()),
+								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.pImageInfo = descriptorWrites.data() };
+	vkUpdateDescriptorSets(m_device, 1, &descWrites, 0, nullptr);
+
+	// upload materials to the GPU
+	const size_t matDataSize = m_materials.size() * sizeof(Material);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matDataSize);
+	m_materialBufferId = addBuffer(matBuffer);
+	uploadBufferData(matBuffer, 0, m_materials.data(), matDataSize);
+
+	// upload geo data and get buffer Ids
+	uploadBufferData(vertexBuffer, 0, m_vertices.data(), vertexBufferBytes);
+	uploadBufferData(indexBuffer, 0, m_indices.data(), indexBufferBytes);
+
+
+	return true;
+}
+
+std::vector<Image> Application::loadImages(const tg3_model &model, const std::filesystem::path &imageDir)
+{
+	std::vector<Image> images(model.images_count);
+	for (int i = 0; i < model.images_count; ++i)
+	{
+		Image &img = images[i];
+		std::filesystem::path imagePath = imageDir / model.images[i].uri.data;
+		std::print("Loading image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
+		img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
+	}
+	return images;
+}
+
+std::vector<uint32_t> Application::loadSamplers(const tg3_model &model)
+{
+	std::vector<uint32_t> samplerIds(model.samplers_count);
+	for (int i = 0; i < model.samplers_count; ++i)
+	{
+		const tg3_sampler &tg3Sampler = model.samplers[i];
+		VkSamplerCreateInfo samplerInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = tg3Sampler.mag_filter == TG3_TEXTURE_FILTER_LINEAR ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+			.minFilter = tg3Sampler.min_filter == TG3_TEXTURE_FILTER_LINEAR ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
+			.addressModeU = tg3Sampler.wrap_s == TG3_TEXTURE_WRAP_REPEAT ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = tg3Sampler.wrap_t == TG3_TEXTURE_WRAP_REPEAT ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.compareEnable = VK_FALSE
+		};
+
+		// single sampler across all textures (for now)
+		VkSampler sampler = nullptr;
+		if (vkCreateSampler(m_device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
+		{
+			showError("Unable to create texture sampler");
+			return std::vector<uint32_t>();
+		}
+		m_samplers.push_back(sampler);
+		samplerIds[i] = m_samplers.size();
+	}
+	return samplerIds;
+}
+
+std::vector<uint32_t> Application::loadTextures(const tg3_model &model, const std::vector<uint32_t> &imageIds, const std::vector<uint32_t> &samplerIds)
+{
+	std::vector<uint32_t> textureIds(model.textures_count);
+	for (int i = 0; i < model.textures_count; ++i)
+	{
+		const tg3_texture &tex = model.textures[i];
+		m_textures.push_back(
+			Texture
+			{
+				.imageId = imageIds[tex.source],
+				.samplerId = samplerIds[tex.sampler]
+			});
+		textureIds[i] = m_textures.size();
+	}
+	return textureIds;
+}
+
+std::vector<uint32_t> Application::uploadImages(const std::vector<Image> &images)
+{
 	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
 	std::vector<GPUBuffer> stagingBuffers;
-	stagingBuffers.reserve(importedRes.images.size() + 1);
-
-	// create a fallback color texture
-	uint32_t whitePixel = 0xFFFFFFFF; // RGBA
-	auto [whiteTexId, whiteTexBuffer] = createTexture(commandBuffer, reinterpret_cast<unsigned char *>(&whitePixel), 1, 1, 4);
-	stagingBuffers.push_back(whiteTexBuffer);
+	stagingBuffers.reserve(images.size() + 1);
 
 	// upload images to GPU textures
-	std::vector<uint32_t> textureIds(importedRes.images.size());
-	for (int i = 0; i < importedRes.images.size(); ++i)
+	std::vector<uint32_t> imageIds(images.size());
+	for (int i = 0; i < images.size(); ++i)
 	{
-		Image &img = importedRes.images[i];
-		auto [textureId, stagingTexBuffer] = createTexture(commandBuffer, img.data, img.width, img.height, 4); // we're always loading as 4 channel
-		textureIds[i] = textureId;
+		const Image &image = images[i];
+		auto [imageId, stagingTexBuffer] = createImage(commandBuffer, image.data, image.width, image.height, 4);
+		imageIds[i] = imageId;
 		stagingBuffers.push_back(stagingTexBuffer);
 	}
 
@@ -103,87 +200,7 @@ bool Application::loadData()
 	{
 		vmaDestroyBuffer(m_vmaAllocator, stageBuff.vkBuffer, stageBuff.allocation);
 	}
-
-	// single sampler is simpler for now
-	VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-									.magFilter = VK_FILTER_LINEAR,
-									.minFilter = VK_FILTER_LINEAR,
-									.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-									.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-									.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-									.compareEnable = VK_FALSE };
-
-	if (vkCreateSampler(m_device, &samplerInfo, nullptr, &m_sampler) != VK_SUCCESS)
-	{
-		showError("Unable to create texture sampler");
-		return false;
-	}
-
-	// update the texture descriptors
-	std::vector<VkDescriptorImageInfo> descriptorWrites;
-	descriptorWrites.reserve(m_textures.size());
-	for (GPUTexture &texture : m_textures)
-	{
-		descriptorWrites.push_back({
-			.sampler = m_sampler,
-			.imageView = texture.imageView,
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
-	}
-
-	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-								.dstSet = m_globalDescSet,
-								.dstBinding = 0,
-								.dstArrayElement = 0,
-								.descriptorCount = static_cast<uint32_t>(descriptorWrites.size()),
-								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-								.pImageInfo = descriptorWrites.data() };
-	vkUpdateDescriptorSets(m_device, 1, &descWrites, 0, nullptr);
-
-	// create GPU side material list
-	std::vector<uint32_t> materialIds(importedRes.materials.size());
-	for (int i = 0; i < importedRes.materials.size(); ++i)
-	{
-		const Material &mat = importedRes.materials[i];
-		GPUMaterial gpuMat;
-		gpuMat.baseColor = mat.baseColor;
-		gpuMat.textureId = textureIds[mat.baseColorTextureIndex];
-		materialIds[i] = createMaterial(std::move(gpuMat));
-	}
-
-	// upload materials to the GPU
-	const size_t matBufferSize = m_materials.size() * sizeof(GPUMaterial);
-	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matBufferSize, m_materials.data());
-	m_materialBufferId = addBuffer(matBuffer);
-
-	// map gltf material indices to material IDs
-	std::vector<uint32_t> meshIds(importedRes.meshes.size());
-	for (int i = 0; i < importedRes.meshes.size(); ++i)
-	{
-		Mesh &mesh = importedRes.meshes[i];
-		// map gltf material index to loaded material ID
-		for (SubMesh &subMesh : mesh.subMeshes)
-		{
-			subMesh.materialId = materialIds[subMesh.materialId];
-		}
-		meshIds[i] = addMesh(std::move(mesh));
-	}
-
-	// import scene nodes
-	const tg3_scene *scene = &model.scenes[model.default_scene != -1
-		? model.default_scene : 0];
-
-	// iterate over the roots nodes
-	m_rootNodes.reserve(scene->nodes_count); // track root node IDs for drawing
-	uint32_t lastNodeId = 0;
-	for (int i = 0; i < scene->nodes_count; ++i)
-	{
-		lastNodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
-		m_rootNodes.push_back(lastNodeId);
-	}
-
-	tg3_model_free(&model);
-
-	return true;
+	return imageIds;
 }
 
 VkCommandBuffer Application::startTransientCommandBuffer()
@@ -236,6 +253,39 @@ void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
 	vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 }
 
+void Application::loadGltf(const std::string &filepath)
+{
+	// load and parse GLTF
+	tg3_model model;
+	if (!parseModel(filepath, model))
+	{
+		return;
+	}
+
+	std::filesystem::path imageDir = std::filesystem::path(filepath).parent_path();
+	std::vector<Image> images = loadImages(model, imageDir);
+	std::vector<uint32_t> imageIds = uploadImages(images);
+	std::vector<uint32_t> samplerIds = loadSamplers(model);
+	std::vector<uint32_t> textureIds = loadTextures(model, imageIds, samplerIds);
+	std::vector<uint32_t> materialIds = loadMaterials(model, textureIds);
+	std::vector<uint32_t> meshIds = loadMeshes(model, materialIds);
+
+	// import scene nodes
+	const tg3_scene *scene = &model.scenes[model.default_scene != -1
+		? model.default_scene : 0];
+
+	// iterate over the roots nodes
+	m_rootNodes.reserve(m_rootNodes.size() + scene->nodes_count); // track root node IDs for drawing
+	uint32_t lastNodeId = 0;
+	for (int i = 0; i < scene->nodes_count; ++i)
+	{
+		lastNodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
+		m_rootNodes.push_back(lastNodeId);
+	}
+
+	tg3_model_free(&model);
+}
+
 void Application::shutdown()
 {
 	// wait in case resources are in use
@@ -246,13 +296,16 @@ void Application::shutdown()
 	vkDestroyDescriptorPool(m_device, m_descPool, nullptr);
 
 	// delete textures and samplers
-	for (auto &tex : m_textures)
+	for (auto &img : m_images)
 	{
-		vkDestroyImageView(m_device, tex.imageView, nullptr);
-		vkDestroyImage(m_device, tex.image, nullptr);
-		vmaFreeMemory(m_vmaAllocator, tex.allocation);
+		vkDestroyImageView(m_device, img.imageView, nullptr);
+		vkDestroyImage(m_device, img.image, nullptr);
+		vmaFreeMemory(m_vmaAllocator, img.allocation);
 	}
-	vkDestroySampler(m_device, m_sampler, nullptr);
+	for (VkSampler sampler : m_samplers)
+	{
+		vkDestroySampler(m_device, sampler, nullptr);
+	}
 
 	// delete buffers
 	for (auto &buff : m_buffers)
@@ -1501,7 +1554,7 @@ void Application::render()
 //	vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 //}
 
-std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels)
+std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels)
 {
 	// create vk image and allocation
 	VkFormat imageFormat = VK_FORMAT_R8G8B8A8_SRGB;
@@ -1519,8 +1572,8 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
 	};
 	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_CPU_TO_GPU };
-	GPUTexture texture;
-	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &texture.image, &texture.allocation, nullptr) != VK_SUCCESS)
+	GPUImage gpuImage;
+	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &gpuImage.image, &gpuImage.allocation, nullptr) != VK_SUCCESS)
 	{
 		showError("Error creating image");
 		return { 0, GPUBuffer{} };
@@ -1529,7 +1582,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 	VkImageViewCreateInfo imgViewInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.image = texture.image,
+		.image = gpuImage.image,
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
 		.format = imageFormat,
 		.subresourceRange
@@ -1539,7 +1592,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 			.layerCount = 1
 		}
 	};
-	if (vkCreateImageView(m_device, &imgViewInfo, nullptr, &texture.imageView) != VK_SUCCESS)
+	if (vkCreateImageView(m_device, &imgViewInfo, nullptr, &gpuImage.imageView) != VK_SUCCESS)
 	{
 		showError("Error creating image view");
 		return { 0, GPUBuffer{} };
@@ -1555,7 +1608,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 		.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
 		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		.image = texture.image,
+		.image = gpuImage.image,
 		.subresourceRange
 		{
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1575,14 +1628,15 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 
 	// create staging buffer and issue record copy operation
 	const size_t byteSize = width * height * channels;
-	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize, imageData);
+	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize);
+	uploadBufferData(stageBuff, 0, imageData, byteSize);
 
 	VkBufferImageCopy buffImgCopy
 	{
 		.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
 		.imageExtent = {.width = width, .height = height, .depth = 1 },
 	};
-	vkCmdCopyBufferToImage(commandBuffer, stageBuff.vkBuffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffImgCopy);
+	vkCmdCopyBufferToImage(commandBuffer, stageBuff.vkBuffer, gpuImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffImgCopy);
 
 	// transition image for shader read/sampling
 	VkImageMemoryBarrier2 shaderReadBarrier
@@ -1594,7 +1648,7 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 		.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
 		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		.image = texture.image,
+		.image = gpuImage.image,
 		.subresourceRange
 		{
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1612,9 +1666,10 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 	};
 	vkCmdPipelineBarrier2(commandBuffer, &shaderReadDepInfo);
 
-	m_textures.push_back(texture);
-	const uint32_t textureId = m_textures.size();
-	return { textureId, stageBuff };
+
+	m_images.push_back(gpuImage);
+	const uint32_t imageId = m_images.size();
+	return { imageId, stageBuff };
 	/*
 	// ensure the image is in shader-read-optimal layout
 	VkHostImageLayoutTransitionInfo transition
@@ -1652,6 +1707,156 @@ std::pair<uint32_t, GPUBuffer> Application::createTexture(VkCommandBuffer comman
 		return 0;
 	}
 	*/
+}
+
+std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds)
+{
+	std::vector<uint32_t> materialIds(model.materials_count);
+	for (int i = 0; i < model.materials_count; ++i)
+	{
+		const tg3_material *tg3mat = &model.materials[i];
+		m_materials.push_back(Material
+			{
+				.baseColor = glm::vec4(
+					tg3mat->pbr_metallic_roughness.base_color_factor[0],
+					tg3mat->pbr_metallic_roughness.base_color_factor[1],
+					tg3mat->pbr_metallic_roughness.base_color_factor[2],
+					tg3mat->pbr_metallic_roughness.base_color_factor[3]),
+				.textureIndex = tg3mat->pbr_metallic_roughness.base_color_texture.index != -1
+					? textureIds[tg3mat->pbr_metallic_roughness.base_color_texture.index] - 1
+					: 0
+			});
+		materialIds[i] = m_materials.size();
+	}
+	return materialIds;
+}
+
+std::vector<uint32_t> Application::loadMeshes(const tg3_model &model, const std::vector<uint32_t> &materialIds)
+{
+	std::vector<uint32_t> meshIds(model.meshes_count);
+	// load all gltf mesh and primitive data
+	for (int i = 0; i < model.meshes_count; ++i)
+	{
+		Mesh mesh;
+		const tg3_mesh *tg3mesh = &model.meshes[i];
+		mesh.name = tg3mesh->name.data != nullptr ? tg3mesh->name.data : "No Name";
+
+		// start with vertex positions
+		mesh.subMeshes.resize(tg3mesh->primitives_count);
+		for (int j = 0; j < tg3mesh->primitives_count; ++j)
+		{
+			const tg3_primitive *primitive = &tg3mesh->primitives[j];
+			mesh.subMeshes[j].materialId = materialIds[primitive->material];
+
+			// first look up the positions accessor to get vertex positions and total vertex count
+			for (int k = 0; k < primitive->attributes_count; ++k)
+			{
+				const tg3_str_int_pair *attr = &primitive->attributes[k];
+				if (strcmp(attr->key.data, "POSITION") == 0)
+				{
+					const tg3_accessor *accessor = &model.accessors[attr->value];
+					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
+					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
+					assert(m_vertOffset + accessor->count < m_vertices.size() && "Not enough space to load vertices");
+
+					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
+					{
+						mesh.subMeshes[j].vertexStart = m_vertOffset;
+						mesh.subMeshes[j].vertexCount = accessor->count;
+
+						const float *positions = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
+						for (uint64_t idx = 0; idx < accessor->count; ++idx)
+						{
+							m_vertices[m_vertOffset + idx].position = glm::vec3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
+							m_vertices[m_vertOffset + idx].color = glm::vec4(1, 1, 1, 1);
+						}
+					}
+				}
+			}
+
+			// retrieve the rest of the per-vertex data
+			for (int k = 0; k < primitive->attributes_count; ++k)
+			{
+				const tg3_str_int_pair *attr = &primitive->attributes[k];
+				if (strcmp(attr->key.data, "NORMAL") == 0)
+				{
+					const tg3_accessor *accessor = &model.accessors[attr->value];
+					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
+					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
+
+					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
+					{
+						const float *normals = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
+						for (uint64_t idx = 0; idx < accessor->count; ++idx)
+						{
+							m_vertices[m_vertOffset + idx].normal = glm::vec3(normals[idx * 3], normals[idx * 3 + 1], normals[idx * 3 + 2]);
+						}
+					}
+				}
+				else if (strcmp(attr->key.data, "COLOR_0") == 0)
+				{
+					const tg3_accessor *accessor = &model.accessors[attr->value];
+					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
+					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
+
+					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
+					{
+						const float *colors = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
+						for (uint64_t idx = 0; idx < accessor->count; ++idx)
+						{
+							m_vertices[m_vertOffset + idx].color = glm::vec3(colors[idx * 3], colors[idx * 3 + 1], colors[idx * 3 + 2]);
+						}
+					}
+				}
+				else if (strcmp(attr->key.data, "TEXCOORD_0") == 0)
+				{
+					const tg3_accessor *accessor = &model.accessors[attr->value];
+					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
+					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
+
+					if (accessor->type == TG3_TYPE_VEC2 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
+					{
+						const float *uvs = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
+						for (uint64_t idx = 0; idx < accessor->count; ++idx)
+						{
+							m_vertices[m_vertOffset + idx].uv = glm::vec2(uvs[idx * 2], uvs[idx * 2 + 1]);
+						}
+					}
+				}
+			}
+
+			// copy index data
+			if (primitive->indices != -1 && m_vertices.size())
+			{
+				const tg3_accessor *accessor = &model.accessors[primitive->indices];
+				const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
+				const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
+				assert(m_idxOffset + accessor->count < m_indices.size() && "Not enough space for indices");
+
+				mesh.subMeshes[j].indexStart = m_idxOffset;
+				mesh.subMeshes[j].indexCount = accessor->count;
+
+				if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_INT)
+				{
+					const uint32_t *buffData = reinterpret_cast<const uint32_t *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
+					memcpy(&m_indices[m_idxOffset], buffData, accessor->count * sizeof(uint32_t));
+				}
+				else if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_SHORT)
+				{
+					const uint16_t *buffData = reinterpret_cast<const uint16_t *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
+					for (uint64_t idx = 0; idx < accessor->count; ++idx)
+					{
+						m_indices[m_idxOffset + idx] = static_cast<uint32_t>(buffData[idx]);
+					}
+				}
+			}
+			m_vertOffset += mesh.subMeshes[j].vertexCount;
+			m_idxOffset += mesh.subMeshes[j].indexCount;
+		}
+		m_meshes.push_back(std::move(mesh));
+		meshIds[i] = m_meshes.size();
+	}
+	return meshIds;
 }
 
 bool Application::createDescriptorSets()
@@ -1715,7 +1920,7 @@ bool Application::createDescriptorSets()
 	return true;
 }
 
-GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, void *initData)
+GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize)
 {
 	// create buffer and vma allocation
 	VkBufferCreateInfo buffInfo
@@ -1736,16 +1941,6 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, v
 		return GPUBuffer{};
 	}
 
-	// map and write buffer data
-	void *buffPtr = nullptr;
-	if (vmaMapMemory(m_vmaAllocator, gpuBuff.allocation, &buffPtr) != VK_SUCCESS)
-	{
-		vmaDestroyBuffer(m_vmaAllocator, gpuBuff.vkBuffer, gpuBuff.allocation);
-		return GPUBuffer{};
-	}
-	std::memcpy(static_cast<char *>(buffPtr), initData, buffInfo.size);
-	vmaUnmapMemory(m_vmaAllocator, gpuBuff.allocation);
-
 	// BDA Send Device Pointer
 	VkBufferDeviceAddressInfo vertBdaInfo
 	{
@@ -1757,6 +1952,19 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, v
 	return gpuBuff;
 }
 
+void Application::uploadBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize)
+{
+	// map and write buffer data
+	void *buffPtr = nullptr;
+	if (vmaMapMemory(m_vmaAllocator, buffer.allocation, &buffPtr) != VK_SUCCESS)
+	{
+		vmaDestroyBuffer(m_vmaAllocator, buffer.vkBuffer, buffer.allocation);
+		return;
+	}
+	std::memcpy(static_cast<char *>(buffPtr) + bufferOffset, data, byteSize);
+	vmaUnmapMemory(m_vmaAllocator, buffer.allocation);
+}
+
 uint32_t Application::addBuffer(const GPUBuffer &buffer)
 {
 	m_buffers.push_back(buffer);
@@ -1764,7 +1972,7 @@ uint32_t Application::addBuffer(const GPUBuffer &buffer)
 	return bufferId;
 }
 
-uint32_t Application::createMaterial(GPUMaterial &&gpuMat)
+uint32_t Application::createMaterial(Material &&gpuMat)
 {
 	m_materials.push_back(std::move(gpuMat));
 	return m_materials.size();
