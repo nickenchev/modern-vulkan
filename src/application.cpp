@@ -11,8 +11,9 @@
 #include <print>
 #include <tiny_gltf_v3.h>
 #include <stb_image.h>
-
-#include "gltfloader.h"
+#include <glm/gtc/type_ptr.inl>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -78,10 +79,11 @@ bool Application::loadData()
 	std::vector<uint32_t> whiteImageId = uploadImages(whitePixel);
 
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
-	//gltfPath = "D:/gltf Models/barn/scene.gltf";
-	//gltfPath = "D:/gltf Models/dark_sci-fi_hallway/scene.gltf";
-	loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
-	loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
+	//gltfPath = "";
+	loadGltf("D:/gltf Models/dark_sci-fi_hallway/scene.gltf");
+	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
+	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
+	//loadGltf("D:/gltf Models/barn/scene.gltf");
 
 	updateTextureDescriptors();
 
@@ -241,21 +243,45 @@ void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
 
 void Application::loadGltf(const std::string &filepath)
 {
-	std::print("Loading GLTF at {}\n", filepath);
+	std::print(" ** Loading GLTF: {}\n", filepath);
 	// load and parse GLTF
 	tg3_model model;
-	if (!parseModel(filepath, model))
+	tg3_parse_options opts;
+	tg3_error_stack errors;
+
+	if (!std::filesystem::exists(filepath))
 	{
+		std::print("File doesn't exist: {}\n", filepath);
 		return;
 	}
 
+	tg3_parse_options_init(&opts);
+	tg3_error_stack_init(&errors);
+	tg3_error_code parseResult = tg3_parse_file(&model, &errors, filepath.c_str(), filepath.size(), &opts);
+	if (parseResult != TG3_OK)
+	{
+		std::print("Error parsing glTF file, errors found:\n");
+		for (int i = 0; i < errors.count; ++i)
+		{
+			std::print("{}\n", errors.entries[i].message);
+		}
+		return;
+	}
+	tg3_error_stack_free(&errors);
+
 	std::filesystem::path imageDir = std::filesystem::path(filepath).parent_path();
-	std::vector<Image> images = loadImages(model, imageDir);
-	std::vector<uint32_t> imageIds = uploadImages(images);
-	std::vector<uint32_t> samplerIds = loadSamplers(model);
-	std::vector<uint32_t> textureIds = loadTextures(model, imageIds, samplerIds);
-	std::vector<uint32_t> materialIds = loadMaterials(model, textureIds);
-	std::vector<uint32_t> meshIds = loadMeshes(model, materialIds);
+	std::vector<Image> images = loadImages(model, imageDir); // load images into RAM
+	std::vector<uint32_t> imageIds = uploadImages(images); // upload images to VRAM
+	// free image memory after uploading to VRAM
+	for (const Image &image : images)
+	{
+		stbi_image_free(image.data);
+	}
+
+	std::vector<uint32_t> samplerIds = loadSamplers(model); // samplers required for shaders
+	std::vector<uint32_t> textureIds = loadTextures(model, imageIds, samplerIds); // image/sampler combinations
+	std::vector<uint32_t> materialIds = loadMaterials(model, textureIds); // materials reference textureIds
+	std::vector<uint32_t> meshIds = loadMeshes(model, materialIds); // meshes/submeshes reference materials
 
 	// import scene nodes
 	const tg3_scene *scene = &model.scenes[model.default_scene != -1
@@ -269,9 +295,73 @@ void Application::loadGltf(const std::string &filepath)
 		lastNodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
 		m_rootNodes.push_back(lastNodeId);
 	}
-
 	tg3_model_free(&model);
 	std::print("GLTF Loading Successful\n\n");
+}
+
+uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds)
+{
+	const tg3_node &tg3Node = model.nodes[nodeIndex];
+
+	auto [node, nodeId] = nodeWorld.createNode();
+	node.parentId = parentId;
+
+	if (tg3Node.has_matrix)
+	{
+		glm::mat4 transform(1);
+		float *transformPtr = glm::value_ptr(transform);
+		for (int i = 0; i < 16; ++i)
+		{
+			transformPtr[i] = static_cast<float>(tg3Node.matrix[i]);
+		}
+		
+		glm::vec3 translation, scale, skew;
+		glm::quat rotation;
+		glm::vec4 perspective;
+		glm::decompose(transform, scale, rotation, translation, skew, perspective);
+		node.setTranslation(translation);
+		node.setRotation(rotation);
+		node.setScale(scale);
+
+		// setting matrix clears "dirty" flag
+		node.setTransform(transform);
+	}
+	else
+	{
+		glm::vec3 translation(tg3Node.translation[0], tg3Node.translation[1], tg3Node.translation[2]);
+		glm::quat rotation(tg3Node.rotation[3], tg3Node.rotation[0], tg3Node.rotation[1], tg3Node.rotation[2]);
+		glm::vec3 scale(tg3Node.scale[0], tg3Node.scale[1], tg3Node.scale[2]);
+		
+		node.setTranslation(translation);
+		node.setRotation(rotation);
+		node.setScale(scale);
+	}
+
+	if (tg3Node.mesh != -1)
+	{
+		node.meshId = meshIds[tg3Node.mesh];
+	}
+
+	if (prevSiblingId)
+	{
+		nodeWorld.getNode(prevSiblingId).nextSiblingId = nodeId;
+	}
+
+	// iterate through child nodes
+	uint32_t lastChildId = 0;
+	for (int i = 0; i < tg3Node.children_count; ++i)
+	{
+		int32_t childIndex = tg3Node.children[i];
+		lastChildId = importNode(nodeWorld, model, childIndex, nodeId, lastChildId, meshIds);
+
+		// set parent's first child id field
+		if (!node.firstChildId)
+		{
+			node.firstChildId = lastChildId;
+		}
+	}
+
+	return nodeId;
 }
 
 void Application::shutdown()

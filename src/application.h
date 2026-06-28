@@ -188,6 +188,7 @@ class Application
 	uint32_t createMaterial(Material &&gpuMat);
 	uint32_t addMesh(Mesh &&mesh);
 	uint32_t createNode(Node &&node);
+	uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds);
 
 public:
 	bool initialize();
