@@ -155,24 +155,6 @@ bool Application::loadData()
 
 void Application::uploadBufferData(VkCommandBuffer commandBuffer, GPUBuffer srcBuffer, GPUBuffer dstBuffer, size_t byteSize)
 {
-	VkBufferMemoryBarrier2 transferBarrier
-	{
-		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-		.srcStageMask = VK_PIPELINE_STAGE_2_NONE,
-		.srcAccessMask = VK_ACCESS_2_NONE,
-		.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-		.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-		.buffer = srcBuffer.vkBuffer,
-		.size = VK_WHOLE_SIZE
-	};
-	VkDependencyInfo transferDepInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.bufferMemoryBarrierCount = 1,
-		.pBufferMemoryBarriers = &transferBarrier
-	};
-	vkCmdPipelineBarrier2(commandBuffer, &transferDepInfo);
-
 	VkBufferCopy buffCopy
 	{
 		.srcOffset = 0,
