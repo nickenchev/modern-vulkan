@@ -131,9 +131,13 @@ bool Application::loadData()
 
 	// copy staged geo data to VRAM
 	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
-	uploadBufferData(commandBuffer, vertexBufferStage, vertexBuffer, vertexBufferBytes);
-	uploadBufferData(commandBuffer, indexBufferStage, indexBuffer, indexBufferBytes);
+	VkBufferCopy buffCopyVerts { .srcOffset = 0, .dstOffset = 0, .size = vertexBufferBytes };
+	vkCmdCopyBuffer(commandBuffer, vertexBufferStage.vkBuffer, vertexBuffer.vkBuffer, 1, &buffCopyVerts);
+	VkBufferCopy buffCopyIndices { .srcOffset = 0, .dstOffset = 0, .size = indexBufferBytes };
+	vkCmdCopyBuffer(commandBuffer, indexBufferStage.vkBuffer, indexBuffer.vkBuffer, 1, &buffCopyIndices);
 	submitTransientCommandBuffer(commandBuffer); // submit and wait
+
+	// delete staging geo buffers
 	vmaDestroyBuffer(m_vmaAllocator, vertexBufferStage.vkBuffer, vertexBufferStage.allocation);
 	vmaDestroyBuffer(m_vmaAllocator, indexBufferStage.vkBuffer, indexBufferStage.allocation);
 
@@ -151,17 +155,6 @@ bool Application::loadData()
 	mapCopyBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
 
 	return true;
-}
-
-void Application::uploadBufferData(VkCommandBuffer commandBuffer, GPUBuffer srcBuffer, GPUBuffer dstBuffer, size_t byteSize)
-{
-	VkBufferCopy buffCopy
-	{
-		.srcOffset = 0,
-		.dstOffset = 0,
-		.size = byteSize
-	};
-	vkCmdCopyBuffer(commandBuffer, srcBuffer.vkBuffer, dstBuffer.vkBuffer, 1, &buffCopy);
 }
 
 std::vector<Image> Application::loadImages(const tg3_model &model, const std::filesystem::path &imageDir)

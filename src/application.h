@@ -184,11 +184,7 @@ class Application
 
 	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable = false, bool queryAddress = false);
 	void mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
-	void uploadBufferData(VkCommandBuffer commandBuffer, GPUBuffer srcBuffer, GPUBuffer dstBuffer, size_t byteSize);
 	uint32_t addBuffer(const GPUBuffer &buffer);
-	uint32_t createMaterial(Material &&gpuMat);
-	uint32_t addMesh(Mesh &&mesh);
-	uint32_t createNode(Node &&node);
 	uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds);
 
 public:
