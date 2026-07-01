@@ -11,7 +11,7 @@
 #include <print>
 #include <tiny_gltf_v3.h>
 #include <stb_image.h>
-#include <glm/gtc/type_ptr.inl>
+#include <glm/gtc/type_ptr.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
 
@@ -41,31 +41,14 @@ bool Application::initialize()
 bool Application::loadData()
 {
 	// preallocate mem for vertex and index data
-	constexpr size_t vertexBufferBytes = 32 * 1024 * 1024; // 32MB vertex budget
+	constexpr size_t vertexBufferBytes = 64 * 1024 * 1024; // 64MB vertex budget
 	constexpr size_t indexBufferBytes = 32 * 1024 * 1024; // 32MB index budget
 	constexpr size_t totalVerts = vertexBufferBytes / sizeof(Vertex);
 	constexpr size_t totalIndices = indexBufferBytes / sizeof(uint32_t);
 	m_vertices.resize(totalVerts);
 	m_indices.resize(totalIndices);
 
-	// create GPU-side buffers
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertexBufferBytes);
-	if (!vertexBuffer.vkBuffer)
-	{
-		showError("Error creating vertex buffer");
-		return false;
-	}
-	m_vertexBufferId = addBuffer(vertexBuffer);
-
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, indexBufferBytes);
-	if (!indexBuffer.vkBuffer)
-	{
-		showError("Error creating index buffer");
-		return false;
-	}
-	m_indexBufferId = addBuffer(indexBuffer);
-
-	// fallback texture base color texture (0-index in tex array)
+	// fallback 1x1 white texture base color texture (0-index in tex array)
 	uint32_t whitePixelData = 0xFFFFFFFF; // RGBA
 	std::vector<Image> whitePixel{
 		Image
@@ -77,32 +60,126 @@ bool Application::loadData()
 		}
 	};
 	std::vector<uint32_t> whiteImageId = uploadImages(whitePixel);
+	// fallback texture sampler
+	VkSamplerCreateInfo samplerInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+		.magFilter = VK_FILTER_NEAREST,
+		.minFilter = VK_FILTER_NEAREST,
+		.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+		.compareEnable = VK_FALSE
+	};
+	VkSampler sampler = nullptr;
+	if (vkCreateSampler(m_device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
+	{
+		showError("Unable to create texture sampler");
+		return false;
+	}
+	m_samplers.push_back(sampler);
+	uint32_t whiteSamplerId = m_samplers.size();
+	m_textures.push_back(
+		Texture
+		{
+			.imageId = whiteImageId.front(),
+			.samplerId = whiteSamplerId
+		});
 
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "";
-	loadGltf("D:/gltf Models/dark_sci-fi_hallway/scene.gltf");
+	//loadGltf("D:/gltf Models/dark_sci-fi_hallway/scene.gltf");
 	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
 	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
+	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
+	loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+	Node &root = m_nodeWorld.getNode(m_rootNodes[0]);
+	root.setScale(glm::vec3(0.01, 0.01, 0.01));
+
+	// staging buffers for geo data
+	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true);
+	if (!vertexBufferStage.vkBuffer)
+	{
+		showError("Error creating vertex staging buffer");
+		return false;
+	}
+	GPUBuffer indexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, indexBufferBytes, true);
+	if (!indexBufferStage.vkBuffer)
+	{
+		showError("Error creating index staging buffer");
+		return false;
+	}
+	// device-local buffers
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes, false, true);
+	if (!vertexBuffer.vkBuffer)
+	{
+		showError("Error creating vertex buffer");
+		return false;
+	}
+	m_vertexBufferId = addBuffer(vertexBuffer);
+	mapCopyBufferData(vertexBufferStage, 0, m_vertices.data(), vertexBufferBytes);
+
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferBytes, false, true);
+	if (!indexBuffer.vkBuffer)
+	{
+		showError("Error creating index buffer");
+		return false;
+	}
+	m_indexBufferId = addBuffer(indexBuffer);
+	mapCopyBufferData(indexBufferStage, 0, m_indices.data(), indexBufferBytes);
+
+	// copy staged geo data to VRAM
+	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
+	uploadBufferData(commandBuffer, vertexBufferStage, vertexBuffer, vertexBufferBytes);
+	uploadBufferData(commandBuffer, indexBufferStage, indexBuffer, indexBufferBytes);
+	submitTransientCommandBuffer(commandBuffer); // submit and wait
+	vmaDestroyBuffer(m_vmaAllocator, vertexBufferStage.vkBuffer, vertexBufferStage.allocation);
+	vmaDestroyBuffer(m_vmaAllocator, indexBufferStage.vkBuffer, indexBufferStage.allocation);
 
 	updateTextureDescriptors();
 
-	// upload data to GPU
-	uploadBufferData(vertexBuffer, 0, m_vertices.data(), vertexBufferBytes);
-	uploadBufferData(indexBuffer, 0, m_indices.data(), indexBufferBytes);
-
-	// upload materials to the GPU
+	// material buffer, using host-visible memory since access is infrequent (data is cached)
 	const size_t matDataBytes = m_materials.size() * sizeof(Material);
-	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, matDataBytes);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, matDataBytes, true, true);
 	if (!matBuffer.vkBuffer)
 	{
 		showError("Error creating material buffer");
 		return false;
 	}
 	m_matBufferId = addBuffer(matBuffer);
-	uploadBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
+	mapCopyBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
 
 	return true;
+}
+
+void Application::uploadBufferData(VkCommandBuffer commandBuffer, GPUBuffer srcBuffer, GPUBuffer dstBuffer, size_t byteSize)
+{
+	VkBufferMemoryBarrier2 transferBarrier
+	{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+		.srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+		.srcAccessMask = VK_ACCESS_2_NONE,
+		.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+		.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+		.buffer = srcBuffer.vkBuffer,
+		.size = VK_WHOLE_SIZE
+	};
+	VkDependencyInfo transferDepInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.bufferMemoryBarrierCount = 1,
+		.pBufferMemoryBarriers = &transferBarrier
+	};
+	vkCmdPipelineBarrier2(commandBuffer, &transferDepInfo);
+
+	VkBufferCopy buffCopy
+	{
+		.srcOffset = 0,
+		.dstOffset = 0,
+		.size = byteSize
+	};
+	vkCmdCopyBuffer(commandBuffer, srcBuffer.vkBuffer, dstBuffer.vkBuffer, 1, &buffCopy);
 }
 
 std::vector<Image> Application::loadImages(const tg3_model &model, const std::filesystem::path &imageDir)
@@ -314,7 +391,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		{
 			transformPtr[i] = static_cast<float>(tg3Node.matrix[i]);
 		}
-		
+
 		glm::vec3 translation, scale, skew;
 		glm::quat rotation;
 		glm::vec4 perspective;
@@ -331,7 +408,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		glm::vec3 translation(tg3Node.translation[0], tg3Node.translation[1], tg3Node.translation[2]);
 		glm::quat rotation(tg3Node.rotation[3], tg3Node.rotation[0], tg3Node.rotation[1], tg3Node.rotation[2]);
 		glm::vec3 scale(tg3Node.scale[0], tg3Node.scale[1], tg3Node.scale[2]);
-		
+
 		node.setTranslation(translation);
 		node.setRotation(rotation);
 		node.setScale(scale);
@@ -461,7 +538,7 @@ void Application::run()
 		}
 
 		// handle basic cam movement
-		const float speed = 0.3f;
+		const float speed = 1.0f;
 		if (keys[SDL_SCANCODE_A])
 		{
 			m_camRotation += speed * deltaTime;
@@ -1387,7 +1464,9 @@ void Application::render()
 		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the image
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // keep data for presentation
-		.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
+		.clearValue{.color{0.3, 0.3, 1, 1}}
+		//.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
+
 	};
 	VkRenderingAttachmentInfo depthAttachInfo
 	{
@@ -1452,7 +1531,7 @@ void Application::render()
 		glm::vec3 camPosition = glm::vec3(cosf(m_camRotation), m_camElevation, sinf(m_camRotation)) * m_camDistance;
 
 		const float aspectRatio = m_width / static_cast<float>(m_height);
-		glm::mat4 matProj = glm::perspectiveRH(glm::radians(85.0f), aspectRatio, 0.1f, 100.0f);
+		glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 100.0f);
 		glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 		glm::mat4 matViewProj = matProj * matView;
 
@@ -1584,54 +1663,6 @@ void Application::render()
 	vkQueuePresentKHR(m_gfxQueue, &presentInfo);
 }
 
-//VkCommandBuffer Application::startTransientCommandBuffer()
-//{
-//	// allocate the transient command buffer
-//	VkCommandBufferAllocateInfo cmdAllocInfo
-//	{
-//		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-//		.commandPool = m_commandPool,
-//		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-//		.commandBufferCount = 1,
-//	};
-//
-//	VkCommandBuffer commandBuffer = nullptr;
-//	if (vkAllocateCommandBuffers(m_device, &cmdAllocInfo, &commandBuffer) != VK_SUCCESS)
-//	{
-//		showError("Unable to allocate command buffer");
-//		return nullptr;
-//	}
-//
-//	// begin the command buffer
-//	VkCommandBufferBeginInfo beginInfo
-//	{
-//		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-//		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-//	};
-//	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
-//	{
-//		showError("Unable to begin command buffer");
-//		return nullptr;
-//	}
-//	return commandBuffer;
-//}
-//
-//void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
-//{
-//	vkEndCommandBuffer(commandBuffer);
-//
-//	VkSubmitInfo submitInfo
-//	{
-//		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-//		.commandBufferCount = 1,
-//		.pCommandBuffers = &commandBuffer
-//	};
-//
-//	vkQueueSubmit(m_gfxQueue, 1, &submitInfo, nullptr);
-//	vkQueueWaitIdle(m_gfxQueue);
-//	vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
-//}
-
 std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels)
 {
 	// create vk image and allocation
@@ -1649,7 +1680,7 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
 	};
-	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_CPU_TO_GPU };
+	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
 	GPUImage gpuImage;
 	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &gpuImage.image, &gpuImage.allocation, nullptr) != VK_SUCCESS)
 	{
@@ -1706,8 +1737,8 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 
 	// create staging buffer and issue record copy operation
 	const size_t byteSize = width * height * channels;
-	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize);
-	uploadBufferData(stageBuff, 0, imageData, byteSize);
+	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize, true);
+	mapCopyBufferData(stageBuff, 0, imageData, byteSize);
 
 	VkBufferImageCopy buffImgCopy
 	{
@@ -1749,6 +1780,15 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 	const uint32_t imageId = m_images.size();
 	return { imageId, stageBuff };
 	/*
+	// need different image usage for host to gpu copy
+	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_CPU_TO_GPU };
+	GPUImage gpuImage;
+	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &gpuImage.image, &gpuImage.allocation, nullptr) != VK_SUCCESS)
+	{
+		showError("Error creating image");
+		return { 0, GPUBuffer{} };
+	}
+
 	// ensure the image is in shader-read-optimal layout
 	VkHostImageLayoutTransitionInfo transition
 	{
@@ -2020,19 +2060,19 @@ bool Application::createDescriptorSets()
 	return true;
 }
 
-GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize)
+GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, bool queryAddress)
 {
 	// create buffer and vma allocation
 	VkBufferCreateInfo buffInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 		.size = byteSize,
-		.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		.usage = usage,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE
 	};
 	VmaAllocationCreateInfo allocInfo
 	{
-		.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+		.flags = mappable ? VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT : 0u,
 		.usage = VMA_MEMORY_USAGE_AUTO
 	};
 	GPUBuffer gpuBuff;
@@ -2042,17 +2082,20 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize)
 	}
 
 	// BDA Send Device Pointer
-	VkBufferDeviceAddressInfo vertBdaInfo
+	if (queryAddress)
 	{
-		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-		.buffer = gpuBuff.vkBuffer
-	};
-	gpuBuff.deviceAddress = vkGetBufferDeviceAddress(m_device, &vertBdaInfo);
+		VkBufferDeviceAddressInfo vertBdaInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+			.buffer = gpuBuff.vkBuffer
+		};
+		gpuBuff.deviceAddress = vkGetBufferDeviceAddress(m_device, &vertBdaInfo);
+	}
 
 	return gpuBuff;
 }
 
-void Application::uploadBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize)
+void Application::mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize)
 {
 	// map and write buffer data
 	void *buffPtr = nullptr;
@@ -2070,16 +2113,4 @@ uint32_t Application::addBuffer(const GPUBuffer &buffer)
 	m_buffers.push_back(buffer);
 	uint32_t bufferId = m_buffers.size();
 	return bufferId;
-}
-
-uint32_t Application::createMaterial(Material &&gpuMat)
-{
-	m_materials.push_back(std::move(gpuMat));
-	return m_materials.size();
-}
-
-uint32_t Application::addMesh(Mesh &&mesh)
-{
-	m_meshes.push_back(std::move(mesh));
-	return m_meshes.size();
 }

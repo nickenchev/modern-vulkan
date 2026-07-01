@@ -9,13 +9,11 @@ add_executable(vulkanapp
 	"src/main.cpp"
 	"src/application.h"
 	"src/application.cpp"
-	 "src/utils.h"
-	 "src/utils.cpp"
-	 "src/ext/tiny_gltf_v3.h"
-	 "src/ext/tinygltf_json.h"
-	 "src/ext/tinygltf.cpp"
-	 
-	  "src/resources.h" "src/nodeworld.h")
+	"src/utils.h"
+	"src/utils.cpp"
+	"src/ext/tinygltf.cpp"
+	"src/resources.h"
+	"src/nodeworld.h")
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

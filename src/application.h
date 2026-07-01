@@ -182,8 +182,9 @@ class Application
 	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
 	void updateTextureDescriptors() const;
 
-	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize);
-	void uploadBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
+	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable = false, bool queryAddress = false);
+	void mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
+	void uploadBufferData(VkCommandBuffer commandBuffer, GPUBuffer srcBuffer, GPUBuffer dstBuffer, size_t byteSize);
 	uint32_t addBuffer(const GPUBuffer &buffer);
 	uint32_t createMaterial(Material &&gpuMat);
 	uint32_t addMesh(Mesh &&mesh);
