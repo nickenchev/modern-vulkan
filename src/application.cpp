@@ -50,16 +50,20 @@ bool Application::loadData()
 
 	// fallback 1x1 white texture base color texture (0-index in tex array)
 	uint32_t whitePixelData = 0xFFFFFFFF; // RGBA
-	std::vector<Image> whitePixel{
-		Image
-		{
-			.width = 1,
-			.height = 1,
-			.channels = 4,
-			.data = reinterpret_cast<unsigned char *>(&whitePixelData),
-		}
+	Image whitePixel
+	{
+		.width = 1,
+		.height = 1,
+		.channels = 4,
+		.data = reinterpret_cast<unsigned char *>(&whitePixelData),
 	};
-	std::vector<uint32_t> whiteImageId = uploadImages(whitePixel);
+
+	VkCommandBuffer whiteImgCmdBuff = startTransientCommandBuffer();
+	auto [whiteImageId, whiteStagingBuffer] = createImage(whiteImgCmdBuff, whitePixel.data, whitePixel.width, whitePixel.height, 4);
+	m_whitePixelImageId = whiteImageId;
+	submitTransientCommandBuffer(whiteImgCmdBuff); // submit and wait
+	vmaDestroyBuffer(m_vmaAllocator, whiteStagingBuffer.vkBuffer, whiteStagingBuffer.allocation);
+
 	// fallback texture sampler
 	VkSamplerCreateInfo samplerInfo
 	{
@@ -77,14 +81,15 @@ bool Application::loadData()
 		showError("Unable to create texture sampler");
 		return false;
 	}
+
+	// store sampler and get ID
 	m_samplers.push_back(sampler);
 	uint32_t whiteSamplerId = m_samplers.size();
-	m_textures.push_back(
-		Texture
-		{
-			.imageId = whiteImageId.front(),
-			.samplerId = whiteSamplerId
-		});
+
+	m_textures.push_back(Texture {
+		.imageId = m_whitePixelImageId,
+		.samplerId = whiteSamplerId
+	});
 
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "";
@@ -96,6 +101,7 @@ bool Application::loadData()
 	loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
 	Node &root = m_nodeWorld.getNode(m_rootNodes[0]);
 	root.setScale(glm::vec3(0.01, 0.01, 0.01));
+	root.setTranslation(glm::vec3(0, -5, 0));
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true);
@@ -130,12 +136,12 @@ bool Application::loadData()
 	mapCopyBufferData(indexBufferStage, 0, m_indices.data(), indexBufferBytes);
 
 	// copy staged geo data to VRAM
-	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
+	VkCommandBuffer geoCmdBuffer = startTransientCommandBuffer();
 	VkBufferCopy buffCopyVerts { .srcOffset = 0, .dstOffset = 0, .size = vertexBufferBytes };
-	vkCmdCopyBuffer(commandBuffer, vertexBufferStage.vkBuffer, vertexBuffer.vkBuffer, 1, &buffCopyVerts);
+	vkCmdCopyBuffer(geoCmdBuffer, vertexBufferStage.vkBuffer, vertexBuffer.vkBuffer, 1, &buffCopyVerts);
 	VkBufferCopy buffCopyIndices { .srcOffset = 0, .dstOffset = 0, .size = indexBufferBytes };
-	vkCmdCopyBuffer(commandBuffer, indexBufferStage.vkBuffer, indexBuffer.vkBuffer, 1, &buffCopyIndices);
-	submitTransientCommandBuffer(commandBuffer); // submit and wait
+	vkCmdCopyBuffer(geoCmdBuffer, indexBufferStage.vkBuffer, indexBuffer.vkBuffer, 1, &buffCopyIndices);
+	submitTransientCommandBuffer(geoCmdBuffer); // submit and wait
 
 	// delete staging geo buffers
 	vmaDestroyBuffer(m_vmaAllocator, vertexBufferStage.vkBuffer, vertexBufferStage.allocation);
@@ -166,6 +172,10 @@ std::vector<Image> Application::loadImages(const tg3_model &model, const std::fi
 		std::filesystem::path imagePath = imageDir / model.images[i].uri.data;
 		std::print("Loading image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
 		img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
+		if (!img.data)
+		{
+			showError("Failed to load image: " + imagePath.string());
+		}
 	}
 	return images;
 }
@@ -228,9 +238,16 @@ std::vector<uint32_t> Application::uploadImages(const std::vector<Image> &images
 	for (int i = 0; i < images.size(); ++i)
 	{
 		const Image &image = images[i];
-		auto [imageId, stagingTexBuffer] = createImage(commandBuffer, image.data, image.width, image.height, 4);
-		imageIds[i] = imageId;
-		stagingBuffers.push_back(stagingTexBuffer);
+		if (image.data)
+		{
+			auto [imageId, stagingTexBuffer] = createImage(commandBuffer, image.data, image.width, image.height, 4);
+			imageIds[i] = imageId;
+			stagingBuffers.push_back(stagingTexBuffer);
+		}
+		else
+		{
+			imageIds[i] = 1; // fallback to white pixel texture
+		}
 	}
 
 	submitTransientCommandBuffer(commandBuffer); // submit and wait
@@ -2076,7 +2093,7 @@ void Application::mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset
 	void *buffPtr = nullptr;
 	if (vmaMapMemory(m_vmaAllocator, buffer.allocation, &buffPtr) != VK_SUCCESS)
 	{
-		vmaDestroyBuffer(m_vmaAllocator, buffer.vkBuffer, buffer.allocation);
+		showError("Unable to map buffer memory");
 		return;
 	}
 	std::memcpy(static_cast<char *>(buffPtr) + bufferOffset, data, byteSize);

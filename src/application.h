@@ -126,6 +126,7 @@ class Application
 	size_t m_idxOffset = 0;
 
 	// gpu resources
+	uint32_t m_whitePixelImageId = 0;
 	uint32_t m_vertexBufferId = 0;
 	uint32_t m_indexBufferId = 0;
 	uint32_t m_matBufferId = 0;
