@@ -183,7 +183,7 @@ class Application
 	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
 	void updateTextureDescriptors() const;
 
-	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable = false, bool queryAddress = false);
+	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable = false);
 	void mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
 	uint32_t addBuffer(const GPUBuffer &buffer);
 	uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds);

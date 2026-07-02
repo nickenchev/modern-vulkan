@@ -117,7 +117,7 @@ bool Application::loadData()
 		return false;
 	}
 	// device-local buffers
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes, false, true);
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes);
 	if (!vertexBuffer.vkBuffer)
 	{
 		showError("Error creating vertex buffer");
@@ -126,7 +126,7 @@ bool Application::loadData()
 	m_vertexBufferId = addBuffer(vertexBuffer);
 	mapCopyBufferData(vertexBufferStage, 0, m_vertices.data(), vertexBufferBytes);
 
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferBytes, false, true);
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferBytes);
 	if (!indexBuffer.vkBuffer)
 	{
 		showError("Error creating index buffer");
@@ -151,7 +151,7 @@ bool Application::loadData()
 
 	// material buffer, using host-visible memory since access is infrequent (data is cached)
 	const size_t matDataBytes = m_materials.size() * sizeof(Material);
-	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, matDataBytes, true, true);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, matDataBytes, true);
 	if (!matBuffer.vkBuffer)
 	{
 		showError("Error creating material buffer");
@@ -246,7 +246,7 @@ std::vector<uint32_t> Application::uploadImages(const std::vector<Image> &images
 		}
 		else
 		{
-			imageIds[i] = 1; // fallback to white pixel texture
+			imageIds[i] = m_whitePixelImageId; // fallback to white pixel texture
 		}
 	}
 
@@ -2052,7 +2052,7 @@ bool Application::createDescriptorSets()
 	return true;
 }
 
-GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, bool queryAddress)
+GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable)
 {
 	// create buffer and vma allocation
 	VkBufferCreateInfo buffInfo
@@ -2074,7 +2074,7 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, b
 	}
 
 	// BDA Send Device Pointer
-	if (queryAddress)
+	if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
 	{
 		VkBufferDeviceAddressInfo vertBdaInfo
 		{
@@ -2083,7 +2083,6 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, b
 		};
 		gpuBuff.deviceAddress = vkGetBufferDeviceAddress(m_device, &vertBdaInfo);
 	}
-
 	return gpuBuff;
 }
 
