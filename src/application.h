@@ -12,6 +12,7 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <vma/vk_mem_alloc.h>
 
 #include "resources.h"
 #include "nodeworld.h"
@@ -23,21 +24,11 @@ struct VmaAllocation_T;
 typedef struct VmaAllocation_T* VmaAllocation;
 struct tg3_model;
 
-struct DrawConstants
+struct FrameConstants
 {
-	glm::mat4 wvp;
-	glm::mat4 worldMatrix;
 	uint64_t vertexBufferAddress = 0;
 	uint64_t materialBufferAddress = 0;
-	uint32_t materialIndex = 0;
-};
-
-struct FrameResources
-{
-	VkCommandPool commandPool = nullptr;
-	VkCommandBuffer commandBuffer = nullptr;
-	VkSemaphore imageAcquiredSemaphore = nullptr;
-	VkDescriptorSet descSet = nullptr;
+	uint64_t renderItemsAddress = 0;
 };
 
 struct GPUImage
@@ -52,6 +43,25 @@ struct GPUBuffer
 	VkBuffer vkBuffer = nullptr;
 	uint64_t deviceAddress = 0;
 	VmaAllocation allocation = nullptr;
+};
+
+struct RenderItem
+{
+	glm::mat4 wvp;
+	glm::mat4 worldMatrix;
+	uint32_t materialIndex = 0;
+};
+
+struct FrameResources
+{
+	VkCommandPool commandPool = nullptr;
+	VkCommandBuffer commandBuffer = nullptr;
+	VkSemaphore imageAcquiredSemaphore = nullptr;
+	VkDescriptorSet descSet = nullptr;
+	GPUBuffer indirectDrawBuffer;
+	GPUBuffer renderItemBuffer;
+	VkDrawIndexedIndirectCommand *indirectDrawPtr = nullptr;
+	RenderItem *renderItemPtr = nullptr;
 };
 
 struct Material
@@ -70,7 +80,7 @@ class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
 	constexpr static uint32_t MaxFramesInFlight{ 2 };
-	constexpr static size_t MaxTextures = 128;
+	constexpr static size_t MaxTextures = 256;
 	constexpr static VkFormat SwapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
 
@@ -143,7 +153,9 @@ class Application
 
 	// game nodes and scene data
 	NodeWorld m_nodeWorld;
-	std::vector<uint32_t> m_rootNodes;
+	uint32_t m_rootNodeId = 0;
+	uint32_t m_lastRootNodeId = 0;
+	std::vector<std::pair<Node *, glm::mat4>> m_nodeRenderQueue;
 
 	// camera related
 	float m_camDistance = 3;
@@ -166,6 +178,7 @@ class Application
 	bool createSyncResources();
 	bool createCommandBuffers();
 	bool createDescriptorSets();
+	bool createIndirectDrawBuffers();
 	void render();
 
 	VkCommandBuffer startTransientCommandBuffer();
@@ -183,7 +196,7 @@ class Application
 	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
 	void updateTextureDescriptors() const;
 
-	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable = false);
+	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage);
 	void mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
 	uint32_t addBuffer(const GPUBuffer &buffer);
 	uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds);

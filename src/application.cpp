@@ -14,6 +14,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
+#include <unordered_map>
 
 void Application::showError(const std::string &errorMessasge) const
 {
@@ -30,11 +31,14 @@ bool Application::initialize()
 		return false;
 	}
 
+	// setup renderer specifits here
+	m_nodeWorld.initialize(1024); // maximum node-world size
+	m_nodeRenderQueue.reserve(128); // render-queue per-frame size
+
 	if (!initializeVulkan())
 	{
 		return false;
 	}
-
 	return true;
 }
 
@@ -86,10 +90,10 @@ bool Application::loadData()
 	m_samplers.push_back(sampler);
 	uint32_t whiteSamplerId = m_samplers.size();
 
-	m_textures.push_back(Texture {
+	m_textures.push_back(Texture{
 		.imageId = m_whitePixelImageId,
 		.samplerId = whiteSamplerId
-	});
+		});
 
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "";
@@ -99,25 +103,25 @@ bool Application::loadData()
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	Node &root = m_nodeWorld.getNode(m_rootNodes[0]);
+	Node &root = m_nodeWorld.getNode(m_rootNodeId);
 	root.setScale(glm::vec3(0.01, 0.01, 0.01));
 	root.setTranslation(glm::vec3(0, -5, 0));
 
 	// staging buffers for geo data
-	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true);
+	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
 	if (!vertexBufferStage.vkBuffer)
 	{
 		showError("Error creating vertex staging buffer");
 		return false;
 	}
-	GPUBuffer indexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, indexBufferBytes, true);
+	GPUBuffer indexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, indexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
 	if (!indexBufferStage.vkBuffer)
 	{
 		showError("Error creating index staging buffer");
 		return false;
 	}
 	// device-local buffers
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes);
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes, false, VMA_MEMORY_USAGE_AUTO);
 	if (!vertexBuffer.vkBuffer)
 	{
 		showError("Error creating vertex buffer");
@@ -126,7 +130,7 @@ bool Application::loadData()
 	m_vertexBufferId = addBuffer(vertexBuffer);
 	mapCopyBufferData(vertexBufferStage, 0, m_vertices.data(), vertexBufferBytes);
 
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferBytes);
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferBytes, false, VMA_MEMORY_USAGE_AUTO);
 	if (!indexBuffer.vkBuffer)
 	{
 		showError("Error creating index buffer");
@@ -137,9 +141,9 @@ bool Application::loadData()
 
 	// copy staged geo data to VRAM
 	VkCommandBuffer geoCmdBuffer = startTransientCommandBuffer();
-	VkBufferCopy buffCopyVerts { .srcOffset = 0, .dstOffset = 0, .size = vertexBufferBytes };
+	VkBufferCopy buffCopyVerts{ .srcOffset = 0, .dstOffset = 0, .size = vertexBufferBytes };
 	vkCmdCopyBuffer(geoCmdBuffer, vertexBufferStage.vkBuffer, vertexBuffer.vkBuffer, 1, &buffCopyVerts);
-	VkBufferCopy buffCopyIndices { .srcOffset = 0, .dstOffset = 0, .size = indexBufferBytes };
+	VkBufferCopy buffCopyIndices{ .srcOffset = 0, .dstOffset = 0, .size = indexBufferBytes };
 	vkCmdCopyBuffer(geoCmdBuffer, indexBufferStage.vkBuffer, indexBuffer.vkBuffer, 1, &buffCopyIndices);
 	submitTransientCommandBuffer(geoCmdBuffer); // submit and wait
 
@@ -151,7 +155,7 @@ bool Application::loadData()
 
 	// material buffer, using host-visible memory since access is infrequent (data is cached)
 	const size_t matDataBytes = m_materials.size() * sizeof(Material);
-	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, matDataBytes, true);
+	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, matDataBytes, true, VMA_MEMORY_USAGE_AUTO);
 	if (!matBuffer.vkBuffer)
 	{
 		showError("Error creating material buffer");
@@ -186,32 +190,54 @@ std::vector<uint32_t> Application::loadSamplers(const tg3_model &model)
 	for (int i = 0; i < model.samplers_count; ++i)
 	{
 		const tg3_sampler &tg3Sampler = model.samplers[i];
+		static const std::unordered_map<int32_t, std::tuple<VkFilter, VkSamplerMipmapMode, float>> filterMap
+		{
+			{ TG3_TEXTURE_FILTER_NEAREST, { VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, 0.25f } },
+			{ TG3_TEXTURE_FILTER_LINEAR, { VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, 0.25f } },
+			{ TG3_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR, { VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_LOD_CLAMP_NONE } },
+			{ TG3_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST, { VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_LOD_CLAMP_NONE } },
+			{ TG3_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR, { VK_FILTER_NEAREST, VK_SAMPLER_MIPMAP_MODE_LINEAR, VK_LOD_CLAMP_NONE } },
+			{ TG3_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST, { VK_FILTER_LINEAR, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_LOD_CLAMP_NONE } }
+		};
+		static const std::unordered_map<int32_t, VkSamplerAddressMode> wrapMap
+		{
+			{ TG3_TEXTURE_WRAP_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT },
+			{ TG3_TEXTURE_WRAP_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE },
+			{ TG3_TEXTURE_WRAP_MIRRORED_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT }
+		};
+
 		VkSamplerCreateInfo samplerInfo
 		{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.magFilter = tg3Sampler.mag_filter == TG3_TEXTURE_FILTER_LINEAR ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-			.minFilter = tg3Sampler.min_filter == TG3_TEXTURE_FILTER_LINEAR ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
-			.addressModeU = tg3Sampler.wrap_s == TG3_TEXTURE_WRAP_REPEAT ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeV = tg3Sampler.wrap_t == TG3_TEXTURE_WRAP_REPEAT ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.magFilter = (tg3Sampler.mag_filter == -1) ? VK_FILTER_LINEAR : std::get<0>(filterMap.at(tg3Sampler.mag_filter)),
+			.minFilter = (tg3Sampler.min_filter == -1) ? VK_FILTER_LINEAR : std::get<0>(filterMap.at(tg3Sampler.min_filter)),
+			.mipmapMode = (tg3Sampler.min_filter == -1) ? VK_SAMPLER_MIPMAP_MODE_LINEAR : std::get<1>(filterMap.at(tg3Sampler.min_filter)),
+			.addressModeU = (tg3Sampler.wrap_s == -1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : wrapMap.at(tg3Sampler.wrap_s),
+			.addressModeV = (tg3Sampler.wrap_t == -1) ? VK_SAMPLER_ADDRESS_MODE_REPEAT : wrapMap.at(tg3Sampler.wrap_t),
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-			.compareEnable = VK_FALSE
+			.compareEnable = VK_FALSE,
+			.minLod = 0.0f,
+			.maxLod = (tg3Sampler.min_filter == -1) ? VK_LOD_CLAMP_NONE : std::get<2>(filterMap.at(tg3Sampler.min_filter))
 		};
 
-		// single sampler across all textures (for now)
 		VkSampler sampler = nullptr;
 		if (vkCreateSampler(m_device, &samplerInfo, nullptr, &sampler) != VK_SUCCESS)
 		{
 			showError("Unable to create texture sampler");
-			return std::vector<uint32_t>();
+			samplerIds[i] = m_textures[0].samplerId; // fallback texture's sampler
 		}
-		m_samplers.push_back(sampler);
-		samplerIds[i] = m_samplers.size();
+		else
+		{
+			m_samplers.push_back(sampler);
+			samplerIds[i] = m_samplers.size();
+		}
 	}
 	return samplerIds;
 }
 
 std::vector<uint32_t> Application::loadTextures(const tg3_model &model, const std::vector<uint32_t> &imageIds, const std::vector<uint32_t> &samplerIds)
 {
+	assert(m_textures.size() + model.textures_count <= MaxTextures && "Exceeding max texture count");
 	std::vector<uint32_t> textureIds(model.textures_count);
 	for (int i = 0; i < model.textures_count; ++i)
 	{
@@ -231,7 +257,7 @@ std::vector<uint32_t> Application::uploadImages(const std::vector<Image> &images
 {
 	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
 	std::vector<GPUBuffer> stagingBuffers;
-	stagingBuffers.reserve(images.size() + 1);
+	stagingBuffers.reserve(images.size());
 
 	// upload images to GPU textures
 	std::vector<uint32_t> imageIds(images.size());
@@ -287,6 +313,7 @@ VkCommandBuffer Application::startTransientCommandBuffer()
 	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
 	{
 		showError("Unable to begin command buffer");
+		vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 		return nullptr;
 	}
 
@@ -312,17 +339,17 @@ void Application::submitTransientCommandBuffer(VkCommandBuffer commandBuffer)
 
 void Application::loadGltf(const std::string &filepath)
 {
-	std::print(" ** Loading GLTF: {}\n", filepath);
-	// load and parse GLTF
-	tg3_model model;
-	tg3_parse_options opts;
-	tg3_error_stack errors;
-
 	if (!std::filesystem::exists(filepath))
 	{
 		std::print("File doesn't exist: {}\n", filepath);
 		return;
 	}
+
+	std::print(" ** Loading GLTF: {}\n", filepath);
+	// load and parse GLTF
+	tg3_model model;
+	tg3_parse_options opts;
+	tg3_error_stack errors;
 
 	tg3_parse_options_init(&opts);
 	tg3_error_stack_init(&errors);
@@ -334,6 +361,7 @@ void Application::loadGltf(const std::string &filepath)
 		{
 			std::print("{}\n", errors.entries[i].message);
 		}
+		tg3_error_stack_free(&errors);
 		return;
 	}
 	tg3_error_stack_free(&errors);
@@ -356,13 +384,21 @@ void Application::loadGltf(const std::string &filepath)
 	const tg3_scene *scene = &model.scenes[model.default_scene != -1
 		? model.default_scene : 0];
 
-	// iterate over the roots nodes
-	m_rootNodes.reserve(m_rootNodes.size() + scene->nodes_count); // track root node IDs for drawing
-	uint32_t lastNodeId = 0;
+	// iterate over the scene's roots nodes, attach to existing root node (if present)
 	for (int i = 0; i < scene->nodes_count; ++i)
 	{
-		lastNodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, lastNodeId, meshIds);
-		m_rootNodes.push_back(lastNodeId);
+		uint32_t nodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, m_lastRootNodeId, meshIds);
+		if (!m_rootNodeId) // first root node
+		{
+			m_rootNodeId = nodeId;
+			m_lastRootNodeId = nodeId;
+		}
+		else // subsequent root nodes, link to previous root node
+		{
+			Node &node = m_nodeWorld.getNode(m_lastRootNodeId);
+			node.nextSiblingId = nodeId;
+			m_lastRootNodeId = nodeId;
+		}
 	}
 	tg3_model_free(&model);
 	std::print("GLTF Loading Successful\n\n");
@@ -467,7 +503,18 @@ void Application::shutdown()
 	{
 		vkDestroySemaphore(m_device, res.imageAcquiredSemaphore, nullptr);
 		vkDestroyCommandPool(m_device, res.commandPool, nullptr); // destroys buffers implicitly
+
+		// indirect draw
+		vmaUnmapMemory(m_vmaAllocator, res.indirectDrawBuffer.allocation);
+		vkDestroyBuffer(m_device, res.indirectDrawBuffer.vkBuffer, nullptr);
+		vmaFreeMemory(m_vmaAllocator, res.indirectDrawBuffer.allocation);
+
+		// render items
+		vmaUnmapMemory(m_vmaAllocator, res.renderItemBuffer.allocation);
+		vkDestroyBuffer(m_device, res.renderItemBuffer.vkBuffer, nullptr);
+		vmaFreeMemory(m_vmaAllocator, res.renderItemBuffer.allocation);
 	}
+	// one-time use command buffer pool
 	vkDestroyCommandPool(m_device, m_commandPool, nullptr);
 
 	// pipeline cleanup
@@ -631,6 +678,12 @@ bool Application::initializeVulkan()
 	if (!createCommandBuffers())
 	{
 		showError("Couldn't create command buffer objects");
+		return false;
+	}
+
+	if (!createIndirectDrawBuffers())
+	{
+		showError("Couldn't create buffers for indirect-drawing");
 		return false;
 	}
 
@@ -813,7 +866,8 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 		!supportedFeatures12.descriptorBindingSampledImageUpdateAfterBind ||
 		!supportedFeatures12.descriptorBindingPartiallyBound ||
 		!supportedFeatures12.runtimeDescriptorArray ||
-		!supportedFeatures.features.shaderInt64)
+		!supportedFeatures.features.shaderInt64 ||
+		!supportedFeatures.features.multiDrawIndirect)
 	{
 		showError("Physical device doesn't meet the feature requirements");
 		return false;
@@ -824,6 +878,7 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 	{
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
 		.pNext = nullptr,
+		.hostImageCopy = VK_FALSE, // enable if you have support
 	};
 	VkPhysicalDeviceVulkan13Features features13
 	{
@@ -850,6 +905,7 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 		.pNext = &features12,
 		.features
 		{
+			.multiDrawIndirect = VK_TRUE,
 			.shaderInt64 = VK_TRUE
 		}
 	};
@@ -1116,7 +1172,7 @@ VkPipeline Application::createGraphicsPipeline()
 
 	VkPushConstantRange pushConstRange{ .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 									   .offset = 0,
-									   .size = sizeof(DrawConstants) };
+									   .size = sizeof(FrameConstants) };
 
 	std::array<VkDescriptorSetLayout, 1> dsLayouts{ m_globalDSLayout };
 
@@ -1306,6 +1362,7 @@ bool Application::createCommandBuffers()
 	VkCommandPoolCreateInfo poolInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
 		.queueFamilyIndex = m_gfxQueueFamIdx
 	};
 	if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS)
@@ -1486,19 +1543,19 @@ void Application::render()
 	vkCmdBindDescriptorSets(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_globalDescSet, 0, nullptr);
 
 	// setup frame data
-	DrawConstants drawConsts;
+	FrameConstants frameConsts;
 	GPUBuffer &vertBuffer = m_buffers[m_vertexBufferId - 1];
 	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
-	drawConsts.vertexBufferAddress = vertBuffer.deviceAddress;
+	frameConsts.vertexBufferAddress = vertBuffer.deviceAddress;
+	GPUBuffer &materialBuffer = m_buffers[m_matBufferId - 1];
+	frameConsts.materialBufferAddress = materialBuffer.deviceAddress;
+	frameConsts.renderItemsAddress = res.renderItemBuffer.deviceAddress;
 
 	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
 	{
-		GPUBuffer &materialBuffer = m_buffers[m_matBufferId - 1];
-		drawConsts.materialBufferAddress = materialBuffer.deviceAddress;
-
 		// set the viewpot and scissor state
 		VkViewport viewport
 		{
@@ -1523,51 +1580,69 @@ void Application::render()
 		glm::vec3 camPosition = glm::vec3(cosf(m_camRotation), m_camElevation, sinf(m_camRotation)) * m_camDistance;
 
 		const float aspectRatio = m_width / static_cast<float>(m_height);
-		glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 100.0f);
+		glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
 		glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 		glm::mat4 matViewProj = matProj * matView;
 
-		// add root nodes to queue
-		std::vector<std::pair<uint32_t, glm::mat4>> nodeQueue;
-		nodeQueue.reserve(128);
+		// per-frame draw constants
+		vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
 
-		for (uint32_t nodeId : m_rootNodes)
+		// add root nodes to render queue
+		m_nodeRenderQueue.clear();
+		uint32_t nodeId = m_rootNodeId;
+		if (nodeId)
 		{
-			nodeQueue.push_back({ nodeId, glm::mat4(1) });
+			do
+			{
+				Node &node = m_nodeWorld.getNode(nodeId);
+				m_nodeRenderQueue.push_back({ &node, glm::mat4(1.0f) });
+				nodeId = node.nextSiblingId;
+			} while (nodeId);
 		}
 
-		while (!nodeQueue.empty())
+		uint32_t drawIndex = 0;
+		while (!m_nodeRenderQueue.empty())
 		{
-			auto [nodeId, parentTransform] = nodeQueue.back();
-			nodeQueue.pop_back();
-
-			Node &node = m_nodeWorld.getNode(nodeId);
-			glm::mat4 matWorld = parentTransform * node.getTransform();
-			drawConsts.wvp = matViewProj * matWorld;
-			drawConsts.worldMatrix = matWorld;
+			auto [node, parentTransform] = m_nodeRenderQueue.back();
+			m_nodeRenderQueue.pop_back();
+			glm::mat4 matWorld = parentTransform * node->getTransform();
 
 			// draw the associated mesh
-			if (node.meshId)
+			if (node->meshId)
 			{
-				// look up the mesh and associated buffer
-				Mesh &mesh = m_meshes[node.meshId - 1];
+				Mesh &mesh = m_meshes[node->meshId - 1];
 				for (SubMesh &subMesh : mesh.subMeshes)
 				{
-					drawConsts.materialIndex = subMesh.materialId - 1;
-					vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DrawConstants), &drawConsts);
-					vkCmdDrawIndexed(res.commandBuffer, subMesh.indexCount, 1, subMesh.indexStart, subMesh.vertexStart, 0);
+					// indirect draw command
+					res.indirectDrawPtr[drawIndex] = VkDrawIndexedIndirectCommand
+					{
+						.indexCount = static_cast<uint32_t>(subMesh.indexCount),
+						.instanceCount = 1,
+						.firstIndex = static_cast<uint32_t>(subMesh.indexStart),
+						.vertexOffset = static_cast<int32_t>(subMesh.vertexStart),
+						.firstInstance = drawIndex
+					};
+					// per render-item data
+					res.renderItemPtr[drawIndex] = RenderItem
+					{
+						.wvp = matViewProj * matWorld,
+						.worldMatrix = matWorld,
+						.materialIndex = subMesh.materialId - 1
+					};
+					drawIndex++;
 				}
 			}
 
 			// child nodes for processing
-			uint32_t childNodeId = node.firstChildId;
+			uint32_t childNodeId = node->firstChildId;
 			while (childNodeId)
 			{
 				Node &child = m_nodeWorld.getNode(childNodeId);
-				nodeQueue.push_back({ childNodeId, matWorld });
+				m_nodeRenderQueue.push_back({ &child, matWorld });
 				childNodeId = child.nextSiblingId;
 			}
 		}
+		vkCmdDrawIndexedIndirect(res.commandBuffer, res.indirectDrawBuffer.vkBuffer, 0, drawIndex, sizeof(VkDrawIndexedIndirectCommand));
 	}
 	// end dynamic rendering
 	vkCmdEndRendering(res.commandBuffer);
@@ -1729,7 +1804,7 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 
 	// create staging buffer and issue record copy operation
 	const size_t byteSize = width * height * channels;
-	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize, true);
+	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize, true, VMA_MEMORY_USAGE_AUTO_PREFER_HOST);
 	mapCopyBufferData(stageBuff, 0, imageData, byteSize);
 
 	VkBufferImageCopy buffImgCopy
@@ -1766,7 +1841,6 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 		.pImageMemoryBarriers = &shaderReadBarrier
 	};
 	vkCmdPipelineBarrier2(commandBuffer, &shaderReadDepInfo);
-
 
 	m_images.push_back(gpuImage);
 	const uint32_t imageId = m_images.size();
@@ -2052,7 +2126,40 @@ bool Application::createDescriptorSets()
 	return true;
 }
 
-GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable)
+bool Application::createIndirectDrawBuffers()
+{
+	for (auto &res : m_frameResources)
+	{
+		// indirect drawing buffer
+		const size_t indirectBuffByteSize = m_nodeWorld.maxNodes() * sizeof(VkDrawIndexedIndirectCommand);
+		res.indirectDrawBuffer = createBuffer(VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, indirectBuffByteSize, true, VMA_MEMORY_USAGE_AUTO);
+
+		// map indirect draw buffer
+		void *indBuffPtr = nullptr;
+		if (vmaMapMemory(m_vmaAllocator, res.indirectDrawBuffer.allocation, &indBuffPtr) != VK_SUCCESS)
+		{
+			showError("Unable to map indirect draw buffer");
+			return false;
+		}
+		res.indirectDrawPtr = reinterpret_cast<VkDrawIndexedIndirectCommand *>(indBuffPtr);
+
+		// render item buffer (per-draw data)
+		const size_t renderItemByteSize = m_nodeWorld.maxNodes() * sizeof(RenderItem);
+		res.renderItemBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, renderItemByteSize, true, VMA_MEMORY_USAGE_AUTO);
+
+		// map indirect draw buffer
+		void *riBuffPtr = nullptr;
+		if (vmaMapMemory(m_vmaAllocator, res.renderItemBuffer.allocation, &riBuffPtr) != VK_SUCCESS)
+		{
+			showError("Unable to map render item buffer");
+			return false;
+		}
+		res.renderItemPtr = reinterpret_cast<RenderItem *>(riBuffPtr);
+	}
+	return true;
+}
+
+GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage)
 {
 	// create buffer and vma allocation
 	VkBufferCreateInfo buffInfo
@@ -2065,7 +2172,7 @@ GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, b
 	VmaAllocationCreateInfo allocInfo
 	{
 		.flags = mappable ? VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT : 0u,
-		.usage = VMA_MEMORY_USAGE_AUTO
+		.usage = memoryUsage,
 	};
 	GPUBuffer gpuBuff;
 	if (vmaCreateBuffer(m_vmaAllocator, &buffInfo, &allocInfo, &gpuBuff.vkBuffer, &gpuBuff.allocation, nullptr) != VK_SUCCESS)

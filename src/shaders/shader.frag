@@ -25,9 +25,9 @@ layout(set = 0, binding = 0) uniform sampler2D textures[];
 
 void main()
 {
-    vec3 lightDirection = normalize(vec3(-1, -1, 0));
+    vec3 lightDirection = normalize(vec3(-1, -1, -1));
     float d = max(dot(normalize(inNormal), -lightDirection), 0);
-    vec4 texColor = texture(textures[inTextureIndex], inUV) * vec4(inColor, 1);
+    vec4 texColor = texture(textures[inTextureIndex], inUV);
 
     // two-tone ambient light
 	vec3 skyColor = vec3(0.15, 0.18, 0.25);
@@ -35,6 +35,8 @@ void main()
 	float t = normalize(inNormal).y * 0.5 + 0.5;
 	vec3 hemiAmbient = mix(groundColor, skyColor, t);
 
-	vec3 litColor = texColor.rgb * d + texColor.rgb * hemiAmbient;
+    vec3 finalColor = inColor * texColor.rgb;
+	//vec3 litColor = finalColor * d;
+	vec3 litColor = finalColor * d + finalColor * hemiAmbient;
 	fragColor = vec4(litColor, texColor.a);
 }

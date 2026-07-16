@@ -5,14 +5,12 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-layout(push_constant, scalar) uniform DrawConstants
+layout(push_constant, scalar) uniform FrameConstants
 {
-    mat4x4 wvp;
-    mat4x4 worldMatrix;
-    uint64_t vertexAddress;
-    uint64_t materialAddress;
-    uint materialIndex;
-} drawConsts;
+    uint64_t vertexBufferAddress;
+    uint64_t materialBufferAddress;
+    uint64_t renderItemBufferAddress;
+} frameConsts;
 
 struct Vertex
 {
@@ -38,6 +36,19 @@ layout(buffer_reference, scalar) readonly buffer MaterialPtr
     Material materials[];
 };
 
+struct RenderItem
+{
+    mat4x4 wvp;
+    mat4x4 worldMatrix;
+    uint materialIndex;
+};
+
+layout(buffer_reference, scalar) readonly buffer RenderItemPtr
+{
+    RenderItem renderItems[];
+};
+
+
 layout (location = 0) out vec3 outColor;
 layout (location = 1) out vec3 outNormal;
 layout (location = 2) out vec2 outUV;
@@ -45,14 +56,17 @@ layout (location = 3) out flat uint outTextureIndex;
 
 void main()
 {
-    VertexPtr vBuffer = VertexPtr(drawConsts.vertexAddress);
+    VertexPtr vBuffer = VertexPtr(frameConsts.vertexBufferAddress);
     Vertex v = vBuffer.vertices[gl_VertexIndex];
 
-    MaterialPtr matBuff = MaterialPtr(drawConsts.materialAddress);
-    outTextureIndex = matBuff.materials[drawConsts.materialIndex].colorTextureIndex;
+    RenderItemPtr riBuffer = RenderItemPtr(frameConsts.renderItemBufferAddress);
+    RenderItem ri = riBuffer.renderItems[gl_InstanceIndex];
 
-    gl_Position = drawConsts.wvp * vec4(v.position, 1.0);
+    MaterialPtr matBuff = MaterialPtr(frameConsts.materialBufferAddress);
+    outTextureIndex = matBuff.materials[ri.materialIndex].colorTextureIndex;
+
+    gl_Position = ri.wvp * vec4(v.position, 1.0);
     outColor = v.color;
-    outNormal = v.normal * mat3x3(drawConsts.worldMatrix);
+    outNormal = v.normal * mat3x3(ri.worldMatrix);
     outUV = v.uv;
 }
