@@ -12,8 +12,6 @@
 #include <tiny_gltf_v3.h>
 #include <stb_image.h>
 #include <glm/gtc/type_ptr.hpp>
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/matrix_decompose.hpp>
 #include <unordered_map>
 
 void Application::showError(const std::string &errorMessasge) const
@@ -33,7 +31,7 @@ bool Application::initialize()
 
 	// setup renderer specifits here
 	m_nodeWorld.initialize(1024); // maximum node-world size
-	m_nodeRenderQueue.reserve(128); // render-queue per-frame size
+	m_nodeRenderStack.reserve(128); // render-stack per-frame size
 
 	if (!initializeVulkan())
 	{
@@ -97,15 +95,16 @@ bool Application::loadData()
 
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "";
-	//loadGltf("D:/gltf Models/dark_sci-fi_hallway/scene.gltf");
 	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
-	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
+	loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
-	loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	Node &root = m_nodeWorld.getNode(m_rootNodeId);
-	root.setScale(glm::vec3(0.01, 0.01, 0.01));
-	root.setTranslation(glm::vec3(0, -5, 0));
+	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+
+	// scale root node
+	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
+	//root.setScale(glm::vec3(0.01, 0.01, 0.01));
+	//root.setTranslation(glm::vec3(0, 1, 0));
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
@@ -121,7 +120,7 @@ bool Application::loadData()
 		return false;
 	}
 	// device-local buffers
-	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes, false, VMA_MEMORY_USAGE_AUTO);
+	GPUBuffer vertexBuffer = createBuffer(VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, vertexBufferBytes, false, VMA_MEMORY_USAGE_AUTO);
 	if (!vertexBuffer.vkBuffer)
 	{
 		showError("Error creating vertex buffer");
@@ -130,7 +129,7 @@ bool Application::loadData()
 	m_vertexBufferId = addBuffer(vertexBuffer);
 	mapCopyBufferData(vertexBufferStage, 0, m_vertices.data(), vertexBufferBytes);
 
-	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, indexBufferBytes, false, VMA_MEMORY_USAGE_AUTO);
+	GPUBuffer indexBuffer = createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, indexBufferBytes, false, VMA_MEMORY_USAGE_AUTO);
 	if (!indexBuffer.vkBuffer)
 	{
 		showError("Error creating index buffer");
@@ -153,7 +152,7 @@ bool Application::loadData()
 
 	updateTextureDescriptors();
 
-	// material buffer, using host-visible memory since access is infrequent (data is cached)
+	// material buffer
 	const size_t matDataBytes = m_materials.size() * sizeof(Material);
 	GPUBuffer matBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, matDataBytes, true, VMA_MEMORY_USAGE_AUTO);
 	if (!matBuffer.vkBuffer)
@@ -395,8 +394,6 @@ void Application::loadGltf(const std::string &filepath)
 		}
 		else // subsequent root nodes, link to previous root node
 		{
-			Node &node = m_nodeWorld.getNode(m_lastRootNodeId);
-			node.nextSiblingId = nodeId;
 			m_lastRootNodeId = nodeId;
 		}
 	}
@@ -419,16 +416,6 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		{
 			transformPtr[i] = static_cast<float>(tg3Node.matrix[i]);
 		}
-
-		glm::vec3 translation, scale, skew;
-		glm::quat rotation;
-		glm::vec4 perspective;
-		glm::decompose(transform, scale, rotation, translation, skew, perspective);
-		node.setTranslation(translation);
-		node.setRotation(rotation);
-		node.setScale(scale);
-
-		// setting matrix clears "dirty" flag
 		node.setTransform(transform);
 	}
 	else
@@ -577,18 +564,22 @@ void Application::run()
 		}
 
 		// handle basic cam movement
-		const float speed = 1.0f;
+		constexpr float speed = 1.0f;
+		constexpr float epsilon = 0.01f;
+		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
+
 		if (keys[SDL_SCANCODE_A])
 		{
-			m_camRotation += speed * deltaTime;
+			m_camYaw += speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_D])
 		{
-			m_camRotation -= speed * deltaTime;
+			m_camYaw -= speed * deltaTime;
 		}
 		if (keys[SDL_SCANCODE_W])
 		{
 			m_camDistance -= speed * deltaTime;
+			m_camDistance = std::max(m_camDistance, epsilon);
 		}
 		if (keys[SDL_SCANCODE_S])
 		{
@@ -596,11 +587,13 @@ void Application::run()
 		}
 		if (keys[SDL_SCANCODE_UP])
 		{
-			m_camElevation += speed * deltaTime;
+			m_camPitch += speed * deltaTime;
+			m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
 		}
 		if (keys[SDL_SCANCODE_DOWN])
 		{
-			m_camElevation -= speed * deltaTime;
+			m_camPitch -= speed * deltaTime;
+			m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
 		}
 
 		render();
@@ -892,12 +885,13 @@ bool Application::createDevice(VkPhysicalDevice physicalDevice)
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		.pNext = &features13,
 		.descriptorIndexing = VK_TRUE,
+		.shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
 		.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
 		.descriptorBindingPartiallyBound = VK_TRUE,
 		.runtimeDescriptorArray = VK_TRUE,
 		.scalarBlockLayout = VK_TRUE,
 		.timelineSemaphore = VK_TRUE,
-		.bufferDeviceAddress = VK_TRUE
+		.bufferDeviceAddress = VK_TRUE,
 	};
 	VkPhysicalDeviceFeatures2 features
 	{
@@ -1169,7 +1163,6 @@ bool Application::createShaders()
 VkPipeline Application::createGraphicsPipeline()
 {
 	// need to define a pipeline layout
-
 	VkPushConstantRange pushConstRange{ .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 									   .offset = 0,
 									   .size = sizeof(FrameConstants) };
@@ -1449,6 +1442,67 @@ void Application::render()
 		m_requireSwapchainRecreate = true;
 	}
 
+	// traverse entire scene and record MDI draw commands
+	glm::vec3 camPosition = glm::vec3(cosf(m_camYaw) * cosf(m_camPitch), sinf(m_camPitch), sinf(m_camYaw) * cosf(m_camPitch)) * m_camDistance;
+
+	const float aspectRatio = m_width / static_cast<float>(m_height);
+	glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+	glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
+	glm::mat4 matViewProj = matProj * matView;
+
+	// push root nodes to render-stack
+	m_nodeRenderStack.clear();
+	uint32_t nodeId = m_rootNodeId;
+	while (nodeId)
+	{
+		Node &node = m_nodeWorld.getNode(nodeId);
+		m_nodeRenderStack.push_back({ &node, glm::mat4(1.0f) });
+		nodeId = node.nextSiblingId;
+	};
+
+	uint32_t drawIndex = 0;
+	while (!m_nodeRenderStack.empty())
+	{
+		auto [node, parentTransform] = m_nodeRenderStack.back();
+		m_nodeRenderStack.pop_back();
+		glm::mat4 matWorld = parentTransform * node->getTransform();
+
+		// draw the associated mesh
+		if (node->meshId)
+		{
+			Mesh &mesh = m_meshes[node->meshId - 1];
+			for (SubMesh &subMesh : mesh.subMeshes)
+			{
+				// indirect draw command
+				res.indirectDrawPtr[drawIndex] = VkDrawIndexedIndirectCommand
+				{
+					.indexCount = static_cast<uint32_t>(subMesh.indexCount),
+					.instanceCount = 1,
+					.firstIndex = static_cast<uint32_t>(subMesh.indexStart),
+					.vertexOffset = static_cast<int32_t>(subMesh.vertexStart),
+					.firstInstance = drawIndex
+				};
+				// per render-item data
+				res.renderItemPtr[drawIndex] = RenderItem
+				{
+					.wvp = matViewProj * matWorld,
+					.worldMatrix = matWorld,
+					.materialIndex = subMesh.materialId - 1
+				};
+				drawIndex++;
+			}
+		}
+
+		// child nodes for processing
+		uint32_t childNodeId = node->firstChildId;
+		while (childNodeId)
+		{
+			Node &child = m_nodeWorld.getNode(childNodeId);
+			m_nodeRenderStack.push_back({ &child, matWorld });
+			childNodeId = child.nextSiblingId;
+		}
+	}
+
 	// begin recording commands
 	VkCommandBufferBeginInfo cmdBeginInfo
 	{
@@ -1458,8 +1512,9 @@ void Application::render()
 	vkBeginCommandBuffer(res.commandBuffer, &cmdBeginInfo);
 
 	// transition the color and depth images
-	std::vector<VkImageMemoryBarrier2> layoutBarriers
+	std::array<VkImageMemoryBarrier2, 2> layoutBarriers
 	{
+		VkImageMemoryBarrier2
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
 			.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -1478,6 +1533,7 @@ void Application::render()
 				.layerCount = 1,
 			}
 		},
+		VkImageMemoryBarrier2
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
 			.srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
@@ -1540,17 +1596,18 @@ void Application::render()
 		.pDepthAttachment = &depthAttachInfo
 	};
 
+	// setup frame data
 	vkCmdBindDescriptorSets(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &m_globalDescSet, 0, nullptr);
 
-	// setup frame data
 	FrameConstants frameConsts;
 	GPUBuffer &vertBuffer = m_buffers[m_vertexBufferId - 1];
-	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
-	frameConsts.vertexBufferAddress = vertBuffer.deviceAddress;
 	GPUBuffer &materialBuffer = m_buffers[m_matBufferId - 1];
+	frameConsts.vertexBufferAddress = vertBuffer.deviceAddress;
 	frameConsts.materialBufferAddress = materialBuffer.deviceAddress;
 	frameConsts.renderItemsAddress = res.renderItemBuffer.deviceAddress;
+	vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
 
+	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
 	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 	// begin dynamic rendering
@@ -1573,75 +1630,7 @@ void Application::render()
 			.extent{.width = m_swapchainWidth, .height = m_swapchainHeight}
 		};
 		vkCmdSetScissor(res.commandBuffer, 0, 1, &scissor);
-
-		// draw our triangle
 		vkCmdBindPipeline(res.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-
-		glm::vec3 camPosition = glm::vec3(cosf(m_camRotation), m_camElevation, sinf(m_camRotation)) * m_camDistance;
-
-		const float aspectRatio = m_width / static_cast<float>(m_height);
-		glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
-		glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-		glm::mat4 matViewProj = matProj * matView;
-
-		// per-frame draw constants
-		vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
-
-		// add root nodes to render queue
-		m_nodeRenderQueue.clear();
-		uint32_t nodeId = m_rootNodeId;
-		if (nodeId)
-		{
-			do
-			{
-				Node &node = m_nodeWorld.getNode(nodeId);
-				m_nodeRenderQueue.push_back({ &node, glm::mat4(1.0f) });
-				nodeId = node.nextSiblingId;
-			} while (nodeId);
-		}
-
-		uint32_t drawIndex = 0;
-		while (!m_nodeRenderQueue.empty())
-		{
-			auto [node, parentTransform] = m_nodeRenderQueue.back();
-			m_nodeRenderQueue.pop_back();
-			glm::mat4 matWorld = parentTransform * node->getTransform();
-
-			// draw the associated mesh
-			if (node->meshId)
-			{
-				Mesh &mesh = m_meshes[node->meshId - 1];
-				for (SubMesh &subMesh : mesh.subMeshes)
-				{
-					// indirect draw command
-					res.indirectDrawPtr[drawIndex] = VkDrawIndexedIndirectCommand
-					{
-						.indexCount = static_cast<uint32_t>(subMesh.indexCount),
-						.instanceCount = 1,
-						.firstIndex = static_cast<uint32_t>(subMesh.indexStart),
-						.vertexOffset = static_cast<int32_t>(subMesh.vertexStart),
-						.firstInstance = drawIndex
-					};
-					// per render-item data
-					res.renderItemPtr[drawIndex] = RenderItem
-					{
-						.wvp = matViewProj * matWorld,
-						.worldMatrix = matWorld,
-						.materialIndex = subMesh.materialId - 1
-					};
-					drawIndex++;
-				}
-			}
-
-			// child nodes for processing
-			uint32_t childNodeId = node->firstChildId;
-			while (childNodeId)
-			{
-				Node &child = m_nodeWorld.getNode(childNodeId);
-				m_nodeRenderQueue.push_back({ &child, matWorld });
-				childNodeId = child.nextSiblingId;
-			}
-		}
 		vkCmdDrawIndexedIndirect(res.commandBuffer, res.indirectDrawBuffer.vkBuffer, 0, drawIndex, sizeof(VkDrawIndexedIndirectCommand));
 	}
 	// end dynamic rendering
@@ -1685,13 +1674,15 @@ void Application::render()
 		.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT // wait before drawing to image
 	};
 	// signal that the image can be presented
-	std::vector<VkSemaphoreSubmitInfo> semaphoreSignals
+	std::array<VkSemaphoreSubmitInfo, 2> semaphoreSignals
 	{
+		VkSemaphoreSubmitInfo
 		{ // render work completion signal
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 			.semaphore = m_renderCompleteSemaphores[imageIndex],
 			.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT
 		},
+		VkSemaphoreSubmitInfo
 		{ // entire frame is completed (timeline)
 			.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 			.semaphore = m_timelineSemaphore,
@@ -1895,24 +1886,24 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 
 void Application::updateTextureDescriptors() const
 {
-	// update the texture descriptors
-	std::vector<VkDescriptorImageInfo> descriptorWrites;
-	descriptorWrites.reserve(m_textures.size());
+	// create combined image & sampler descriptor writes for all textures
+	std::vector<VkDescriptorImageInfo> imageDescriptors;
+	imageDescriptors.reserve(m_textures.size());
 	for (const Texture &texture : m_textures)
 	{
-		descriptorWrites.push_back({
+		imageDescriptors.push_back({
 			.sampler = m_samplers[texture.samplerId - 1],
 			.imageView = m_images[texture.imageId - 1].imageView,
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
 	}
-	VkWriteDescriptorSet descWrites{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+	VkWriteDescriptorSet descSetWrite{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 								.dstSet = m_globalDescSet,
 								.dstBinding = 0,
 								.dstArrayElement = 0,
-								.descriptorCount = static_cast<uint32_t>(descriptorWrites.size()),
+								.descriptorCount = static_cast<uint32_t>(imageDescriptors.size()),
 								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-								.pImageInfo = descriptorWrites.data() };
-	vkUpdateDescriptorSets(m_device, 1, &descWrites, 0, nullptr);
+								.pImageInfo = imageDescriptors.data() };
+	vkUpdateDescriptorSets(m_device, 1, &descSetWrite, 0, nullptr);
 }
 
 std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds)
@@ -1947,100 +1938,82 @@ std::vector<uint32_t> Application::loadMeshes(const tg3_model &model, const std:
 		const tg3_mesh *tg3mesh = &model.meshes[i];
 		mesh.name = tg3mesh->name.data != nullptr ? tg3mesh->name.data : "No Name";
 
-		// start with vertex positions
-		mesh.subMeshes.resize(tg3mesh->primitives_count);
-		for (int j = 0; j < tg3mesh->primitives_count; ++j)
+		// lambda to perform attribute data copy
+		auto writeAttribute = [this, &model]<typename T>(T Vertex:: * member, const tg3_str_int_pair * attr)
 		{
-			const tg3_primitive *primitive = &tg3mesh->primitives[j];
-			mesh.subMeshes[j].materialId = materialIds[primitive->material];
+			const tg3_accessor *accessor = &model.accessors[attr->value];
+			const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
+			const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
+			const size_t bufferOffset = bufferView->byte_offset + accessor->byte_offset;
+			const size_t stride = bufferView->byte_stride != 0 ? bufferView->byte_stride : sizeof(T);
 
-			// first look up the positions accessor to get vertex positions and total vertex count
-			for (int k = 0; k < primitive->attributes_count; ++k)
+			for (uint64_t idx = 0; idx < accessor->count; ++idx)
 			{
-				const tg3_str_int_pair *attr = &primitive->attributes[k];
+				const size_t elementOffset = bufferOffset + idx * stride;
+				const float *data = reinterpret_cast<const float *>(buffer->data.data + elementOffset);
+				if constexpr (std::is_same<T, glm::vec3>())
+				{
+					m_vertices[m_vertOffset + idx].*member = glm::vec3(data[0], data[1], data[2]);
+				}
+				else if constexpr (std::is_same<T, glm::vec2>())
+				{
+					m_vertices[m_vertOffset + idx].*member = glm::vec2(data[0], data[1]);
+				}
+			}
+		};
+
+		// copy the vertex data
+		mesh.subMeshes.resize(tg3mesh->primitives_count);
+		for (int s = 0; s < tg3mesh->primitives_count; ++s)
+		{
+			const tg3_primitive *primitive = &tg3mesh->primitives[s];
+			mesh.subMeshes[s].materialId = materialIds[primitive->material];
+			mesh.subMeshes[s].vertexStart = m_vertOffset;
+
+			for (int a = 0; a < primitive->attributes_count; ++a)
+			{
+				const tg3_str_int_pair *attr = &primitive->attributes[a];
 				if (strcmp(attr->key.data, "POSITION") == 0)
 				{
 					const tg3_accessor *accessor = &model.accessors[attr->value];
-					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
-					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-					assert(m_vertOffset + accessor->count < m_vertices.size() && "Not enough space to load vertices");
+					assert(accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
+					assert(m_vertOffset + accessor->count <= m_vertices.size() && "Not enough space to load vertices");
 
-					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
-					{
-						mesh.subMeshes[j].vertexStart = m_vertOffset;
-						mesh.subMeshes[j].vertexCount = accessor->count;
-
-						const float *positions = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
-						for (uint64_t idx = 0; idx < accessor->count; ++idx)
-						{
-							m_vertices[m_vertOffset + idx].position = glm::vec3(positions[idx * 3], positions[idx * 3 + 1], positions[idx * 3 + 2]);
-							m_vertices[m_vertOffset + idx].color = glm::vec4(1, 1, 1, 1);
-						}
-					}
+					mesh.subMeshes[s].vertexCount = accessor->count;
+					writeAttribute(&Vertex::position, attr);
 				}
-			}
-
-			// retrieve the rest of the per-vertex data
-			for (int k = 0; k < primitive->attributes_count; ++k)
-			{
-				const tg3_str_int_pair *attr = &primitive->attributes[k];
-				if (strcmp(attr->key.data, "NORMAL") == 0)
+				else if (strcmp(attr->key.data, "NORMAL") == 0)
 				{
 					const tg3_accessor *accessor = &model.accessors[attr->value];
-					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
-					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-
-					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
-					{
-						const float *normals = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
-						for (uint64_t idx = 0; idx < accessor->count; ++idx)
-						{
-							m_vertices[m_vertOffset + idx].normal = glm::vec3(normals[idx * 3], normals[idx * 3 + 1], normals[idx * 3 + 2]);
-						}
-					}
+					assert(accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
+					writeAttribute(&Vertex::normal, attr);
 				}
 				else if (strcmp(attr->key.data, "COLOR_0") == 0)
 				{
 					const tg3_accessor *accessor = &model.accessors[attr->value];
-					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
-					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-
-					if (accessor->type == TG3_TYPE_VEC3 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
-					{
-						const float *colors = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
-						for (uint64_t idx = 0; idx < accessor->count; ++idx)
-						{
-							m_vertices[m_vertOffset + idx].color = glm::vec3(colors[idx * 3], colors[idx * 3 + 1], colors[idx * 3 + 2]);
-						}
-					}
+					assert(accessor->type == TG3_TYPE_VEC3 || accessor->type == TG3_TYPE_VEC4);
+					assert(accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
+					writeAttribute(&Vertex::color, attr);
 				}
 				else if (strcmp(attr->key.data, "TEXCOORD_0") == 0)
 				{
 					const tg3_accessor *accessor = &model.accessors[attr->value];
-					const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
-					const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-
-					if (accessor->type == TG3_TYPE_VEC2 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT)
-					{
-						const float *uvs = reinterpret_cast<const float *>(buffer->data.data + bufferView->byte_offset + accessor->byte_offset);
-						for (uint64_t idx = 0; idx < accessor->count; ++idx)
-						{
-							m_vertices[m_vertOffset + idx].uv = glm::vec2(uvs[idx * 2], uvs[idx * 2 + 1]);
-						}
-					}
+					assert(accessor->type == TG3_TYPE_VEC2 && accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
+					writeAttribute(&Vertex::uv, attr);
 				}
 			}
+			m_vertOffset += mesh.subMeshes[s].vertexCount;
 
 			// copy index data
-			if (primitive->indices != -1 && m_vertices.size())
+			if (primitive->indices != -1)
 			{
 				const tg3_accessor *accessor = &model.accessors[primitive->indices];
 				const tg3_buffer_view *bufferView = &model.buffer_views[accessor->buffer_view];
 				const tg3_buffer *buffer = &model.buffers[bufferView->buffer];
-				assert(m_idxOffset + accessor->count < m_indices.size() && "Not enough space for indices");
+				assert(m_idxOffset + accessor->count <= m_indices.size() && "Not enough space for indices");
 
-				mesh.subMeshes[j].indexStart = m_idxOffset;
-				mesh.subMeshes[j].indexCount = accessor->count;
+				mesh.subMeshes[s].indexStart = m_idxOffset;
+				mesh.subMeshes[s].indexCount = accessor->count;
 
 				if (accessor->component_type == TG3_COMPONENT_TYPE_UNSIGNED_INT)
 				{
@@ -2055,9 +2028,8 @@ std::vector<uint32_t> Application::loadMeshes(const tg3_model &model, const std:
 						m_indices[m_idxOffset + idx] = static_cast<uint32_t>(buffData[idx]);
 					}
 				}
+				m_idxOffset += mesh.subMeshes[s].indexCount;
 			}
-			m_vertOffset += mesh.subMeshes[j].vertexCount;
-			m_idxOffset += mesh.subMeshes[j].indexCount;
 		}
 		m_meshes.push_back(std::move(mesh));
 		meshIds[i] = m_meshes.size();
@@ -2067,15 +2039,19 @@ std::vector<uint32_t> Application::loadMeshes(const tg3_model &model, const std:
 
 bool Application::createDescriptorSets()
 {
-	// create a pool to accomodate all descriptor sets
-	std::array<VkDescriptorPoolSize, 1> poolSizes{
-		VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures} };
+	std::array<VkDescriptorPoolSize, 1> poolSizes
+	{
+		VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures }
+	};
 
-	VkDescriptorPoolCreateInfo poolInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-										.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
-										.maxSets = 1,
-										.poolSizeCount = poolSizes.size(),
-										.pPoolSizes = poolSizes.data() };
+	VkDescriptorPoolCreateInfo poolInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
+		.maxSets = 1,
+		.poolSizeCount = poolSizes.size(),
+		.pPoolSizes = poolSizes.data()
+	};
 	if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descPool) != VK_SUCCESS)
 	{
 		showError("Unable to create descriptor pool");
@@ -2083,46 +2059,53 @@ bool Application::createDescriptorSets()
 	}
 
 	// global descriptor set
+	std::array<VkDescriptorSetLayoutBinding, 1> bindings
 	{
-		std::array<VkDescriptorSetLayoutBinding, 1> bindings = {
-			VkDescriptorSetLayoutBinding{.binding = 0,
-										 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-										 .descriptorCount = MaxTextures,
-										 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT} };
-		std::array<VkDescriptorBindingFlags, 1> flags;
-		flags[0] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
-
-		VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
-			.bindingCount = flags.size(),
-			.pBindingFlags = flags.data() };
-
-		VkDescriptorSetLayoutCreateInfo layoutInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-												   .pNext = &flagsInfo,
-												   .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
-												   .bindingCount = bindings.size(),
-												   .pBindings = bindings.data() };
-
-		if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_globalDSLayout) != VK_SUCCESS)
+		VkDescriptorSetLayoutBinding
 		{
-			showError("Unable to create descriptor set layout");
-			return false;
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.descriptorCount = MaxTextures,
+			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
 		}
+	};
+	std::array<VkDescriptorBindingFlags, 1> flags;
+	flags[0] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
 
-		// create the actual descriptor sets
-		VkDescriptorSetAllocateInfo descSetAllocInfo{
-			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-			.descriptorPool = m_descPool,
-			.descriptorSetCount = 1,
-			.pSetLayouts = &m_globalDSLayout,
-		};
-		if (vkAllocateDescriptorSets(m_device, &descSetAllocInfo, &m_globalDescSet) != VK_SUCCESS)
-		{
-			showError("Unable to allocate descriptor set");
-			return false;
-		}
+	VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+		.bindingCount = flags.size(),
+		.pBindingFlags = flags.data()
+	};
+
+	VkDescriptorSetLayoutCreateInfo layoutInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.pNext = &flagsInfo,
+		.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+		.bindingCount = bindings.size(),
+		.pBindings = bindings.data()
+	};
+	if (vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_globalDSLayout) != VK_SUCCESS)
+	{
+		showError("Unable to create descriptor set layout");
+		return false;
 	}
 
+	// create the actual descriptor sets
+	VkDescriptorSetAllocateInfo descSetAllocInfo
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = m_descPool,
+		.descriptorSetCount = 1,
+		.pSetLayouts = &m_globalDSLayout,
+	};
+	if (vkAllocateDescriptorSets(m_device, &descSetAllocInfo, &m_globalDescSet) != VK_SUCCESS)
+	{
+		showError("Unable to allocate descriptor set");
+		return false;
+	}
 	return true;
 }
 

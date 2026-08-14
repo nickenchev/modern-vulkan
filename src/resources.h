@@ -7,10 +7,10 @@ struct SubMesh;
 
 struct Vertex
 {
-	glm::vec3 position;
-	glm::vec3 color;
-	glm::vec3 normal;
-	glm::vec2 uv;
+	glm::vec3 position = glm::vec3(0.0f);
+	glm::vec3 color = glm::vec3(1.0f);
+	glm::vec3 normal = glm::vec3(0.0f);
+	glm::vec2 uv = glm::vec2(0.0f);
 };
 
 struct Mesh
@@ -21,11 +21,11 @@ struct Mesh
 
 struct SubMesh
 {
-	size_t vertexStart;
-	size_t vertexCount;
-	size_t indexStart;
-	size_t indexCount;
-	uint32_t materialId;
+	size_t vertexStart = 0;
+	size_t vertexCount = 0;
+	size_t indexStart = 0;
+	size_t indexCount = 0;
+	uint32_t materialId = 0;
 };
 
 struct Image

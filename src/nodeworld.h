@@ -3,13 +3,15 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
 
 class Node
 {
 	glm::vec3 m_translation = glm::vec3(0, 0, 0);
 	glm::vec3 m_scale = glm::vec3(1, 1, 1);
-	glm::mat4 m_transform = glm::mat4(1);
 	glm::quat m_rotation = glm::quat(1, 0, 0, 0);
+	glm::mat4 m_transform = glm::mat4(1);
 	bool m_dirty = true;
 
 public:
@@ -54,6 +56,9 @@ public:
 	}
 	void setTransform(glm::mat4 &transform)
 	{
+		glm::vec3 skew;
+		glm::vec4 perspective;
+		glm::decompose(transform, m_scale, m_rotation, m_translation, skew, perspective);
 		m_transform = transform;
 		m_dirty = false;
 	}
@@ -86,6 +91,4 @@ public:
 		assert(nodeId > 0 && "Tried retrieving a node with nil ID");
 		return m_nodes[nodeId - 1];
 	}
-
-	std::vector<Node> &allNodes() { return m_nodes; }
 };

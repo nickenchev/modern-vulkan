@@ -80,7 +80,7 @@ class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
 	constexpr static uint32_t MaxFramesInFlight{ 2 };
-	constexpr static size_t MaxTextures = 256;
+	constexpr static size_t MaxTextures = 1024;
 	constexpr static VkFormat SwapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
 
@@ -155,12 +155,12 @@ class Application
 	NodeWorld m_nodeWorld;
 	uint32_t m_rootNodeId = 0;
 	uint32_t m_lastRootNodeId = 0;
-	std::vector<std::pair<Node *, glm::mat4>> m_nodeRenderQueue;
+	std::vector<std::pair<Node *, glm::mat4>> m_nodeRenderStack;
 
 	// camera related
 	float m_camDistance = 3;
-	float m_camRotation = glm::radians(90.0f);
-	float m_camElevation = 0;
+	float m_camYaw = glm::half_pi<float>();
+	float m_camPitch = 0;
 
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();
