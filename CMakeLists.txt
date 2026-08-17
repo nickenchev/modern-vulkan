@@ -9,10 +9,11 @@ add_executable(vulkanapp
 	"src/main.cpp"
 	"src/application.h"
 	"src/application.cpp"
-	 "src/utils.h"
-	 "src/utils.cpp"
-	 "src/ext/tiny_gltf.cc"
-)
+	"src/utils.h"
+	"src/utils.cpp"
+	"src/ext/tinygltf.cpp"
+	"src/resources.h"
+	"src/nodeworld.h")
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,11 +23,12 @@ if(MSVC)
     target_compile_options(vulkanapp PRIVATE /std:c++latest)
 endif()
 
-target_include_directories(vulkanapp PRIVATE "${CMAKE_SOURCE_DIR}/src/ext")
 target_link_libraries(vulkanapp PRIVATE
 	Vulkan::Vulkan
 	Vulkan::volk
 	Vulkan::shaderc_combined
 	SDL3::SDL3
 	glm::glm)
+
+target_include_directories(vulkanapp PRIVATE "src/ext/")
 
