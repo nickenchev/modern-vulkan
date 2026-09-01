@@ -64,18 +64,6 @@ struct FrameResources
 	RenderItem *renderItemPtr = nullptr;
 };
 
-struct Material
-{
-	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
-	uint32_t textureIndex = 0;
-};
-
-struct Texture
-{
-	uint32_t imageId = 0;
-	uint32_t samplerId = 0;
-};
-
 class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
@@ -157,10 +145,13 @@ class Application
 	uint32_t m_lastRootNodeId = 0;
 	std::vector<std::pair<Node *, glm::mat4>> m_nodeRenderStack;
 
-	// camera related
+	// camera
 	float m_camDistance = 3;
 	float m_camYaw = glm::half_pi<float>();
 	float m_camPitch = 0;
+
+	// lights
+	std::vector<Light> m_lights;
 
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();

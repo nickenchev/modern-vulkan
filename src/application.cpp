@@ -96,10 +96,11 @@ bool Application::loadData()
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "";
 	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
-	loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
+	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+	loadGltf("D:/gltf models/modular-demo/modular-demo.gltf");
 
 	// scale root node
 	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
@@ -162,6 +163,11 @@ bool Application::loadData()
 	}
 	m_matBufferId = addBuffer(matBuffer);
 	mapCopyBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
+
+	// lights buffer
+	Light light1{ .position = glm::vec3(0, 5, 0), .color = glm::vec3(1, 1, 1), .intensity = 10.0f };
+	//uint32_t light1Id = 
+	//const size_t lightDataBytes = 
 
 	return true;
 }
@@ -1569,8 +1575,7 @@ void Application::render()
 		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the image
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // keep data for presentation
-		.clearValue{.color{0.3, 0.3, 1, 1}}
-		//.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
+		.clearValue{.color{0.004f, 0.004f, 0.008f, 1}}
 
 	};
 	VkRenderingAttachmentInfo depthAttachInfo

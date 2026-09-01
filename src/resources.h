@@ -35,3 +35,22 @@ struct Image
 	int channels;
 	unsigned char *data;
 };
+
+struct Material
+{
+	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
+	uint32_t textureIndex = 0;
+};
+
+struct Texture
+{
+	uint32_t imageId = 0;
+	uint32_t samplerId = 0;
+};
+
+struct Light
+{
+	glm::vec3 position = glm::vec3(0.0f);
+	glm::vec3 color = glm::vec3(1.0f);
+	float intensity = 1.0f;
+};

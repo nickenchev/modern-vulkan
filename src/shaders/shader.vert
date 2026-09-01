@@ -48,11 +48,12 @@ layout(buffer_reference, scalar) readonly buffer RenderItemPtr
 };
 
 
-layout (location = 0) out vec3 outColor;
-layout (location = 1) out vec3 outNormal;
-layout (location = 2) out vec2 outUV;
-layout (location = 3) out flat uint outTextureIndex;
-layout (location = 4) out flat vec4 outMaterialBaseColor;
+layout (location = 0) out vec3 outFragW;
+layout (location = 1) out vec3 outColor;
+layout (location = 2) out vec3 outNormal;
+layout (location = 3) out vec2 outUV;
+layout (location = 4) out flat uint outTextureIndex;
+layout (location = 5) out flat vec4 outMaterialBaseColor;
 
 void main()
 {
@@ -66,6 +67,7 @@ void main()
     Material material = matBuff.materials[ri.materialIndex];
 
     gl_Position = ri.wvp * vec4(v.position, 1.0);
+    outFragW = (ri.worldMatrix * vec4(v.position, 1.0)).xyz;
     outColor = v.color;
     outNormal = mat3x3(transpose(inverse(ri.worldMatrix))) * v.normal; 
     outUV = v.uv;
