@@ -28,6 +28,7 @@ bool Application::initialize()
 		showError("Error creating window");
 		return false;
 	}
+	SDL_SetWindowRelativeMouseMode(m_window, true);
 
 	// setup renderer specifits here
 	m_nodeWorld.initialize(1024); // maximum node-world size
@@ -96,15 +97,21 @@ bool Application::loadData()
 	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
 	//gltfPath = "";
 	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
-	loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
+	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+	loadGltf("D:/gltf Models/modular-demo/modular-demo.gltf");
 
 	// scale root node
-	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
+	Node &root = m_nodeWorld.getNode(m_rootNodeId);
 	//root.setScale(glm::vec3(0.01, 0.01, 0.01));
 	//root.setTranslation(glm::vec3(0, 1, 0));
+
+	// setup a camera node
+	auto [camNode, camNodeId] = m_nodeWorld.createNode();
+	camNode.setTranslation(glm::vec3(0, 4, 0));
+	m_cameraNodeId = camNodeId;
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
@@ -537,6 +544,9 @@ void Application::shutdown()
 
 void Application::run()
 {
+	assert(m_cameraNodeId && "Camera node must be initialized");
+	updateProjectionMatrix();
+
 	m_running = true;
 	const bool *keys = SDL_GetKeyboardState(nullptr);
 
@@ -559,7 +569,29 @@ void Application::run()
 			{
 				m_width = event.window.data1;
 				m_height = event.window.data2;
+				updateProjectionMatrix();
 				break;
+			}
+			else if (event.type == SDL_EVENT_MOUSE_MOTION)
+			{
+				m_mouseXRel = static_cast<float>(event.motion.xrel);
+				m_mouseYRel = static_cast<float>(event.motion.yrel);
+			}
+			else if (event.type == SDL_EVENT_KEY_UP)
+			{
+				if (event.key.scancode == SDL_SCANCODE_GRAVE)
+				{
+					if (m_camType == CameraType::firstPerson)
+					{
+						m_camType = CameraType::orbit;
+						SDL_SetWindowRelativeMouseMode(m_window, false);
+					}
+					else
+					{
+						m_camType = CameraType::firstPerson;
+						SDL_SetWindowRelativeMouseMode(m_window, true);
+					}
+				}
 			}
 		}
 
@@ -568,32 +600,57 @@ void Application::run()
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 
-		if (keys[SDL_SCANCODE_A])
+		if (m_camType == CameraType::orbit)
 		{
-			m_camYaw += speed * deltaTime;
+			if (keys[SDL_SCANCODE_A])
+			{
+				m_camYaw += speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_D])
+			{
+				m_camYaw -= speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_W])
+			{
+				m_camDistance -= speed * deltaTime;
+				m_camDistance = std::max(m_camDistance, epsilon);
+			}
+			if (keys[SDL_SCANCODE_S])
+			{
+				m_camDistance += speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_UP])
+			{
+				m_camPitch += speed * deltaTime;
+				m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
+			}
+			if (keys[SDL_SCANCODE_DOWN])
+			{
+				m_camPitch -= speed * deltaTime;
+				m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
+			}
 		}
-		if (keys[SDL_SCANCODE_D])
+		else if (m_camType == CameraType::firstPerson)
 		{
-			m_camYaw -= speed * deltaTime;
-		}
-		if (keys[SDL_SCANCODE_W])
-		{
-			m_camDistance -= speed * deltaTime;
-			m_camDistance = std::max(m_camDistance, epsilon);
-		}
-		if (keys[SDL_SCANCODE_S])
-		{
-			m_camDistance += speed * deltaTime;
-		}
-		if (keys[SDL_SCANCODE_UP])
-		{
-			m_camPitch += speed * deltaTime;
-			m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
-		}
-		if (keys[SDL_SCANCODE_DOWN])
-		{
-			m_camPitch -= speed * deltaTime;
-			m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
+			Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
+			glm::vec3 translation = camNode.getTranslation();
+			if (keys[SDL_SCANCODE_A])
+			{
+				translation -= m_camRight * speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_D])
+			{
+				translation += m_camRight * speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_W])
+			{
+				translation += m_camForward * speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_S])
+			{
+				translation -= m_camForward * speed * deltaTime;
+			}
+			camNode.setTranslation(translation);
 		}
 
 		render();
@@ -1442,14 +1499,30 @@ void Application::render()
 		m_requireSwapchainRecreate = true;
 	}
 
+	// camera and view matrix
+	Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
+	glm::vec3 camPosition = camNode.getTranslation();
+	if (m_camType == CameraType::orbit)
+	{
+		camPosition = glm::vec3(cosf(m_camYaw) * cosf(m_camPitch), sinf(m_camPitch), sinf(m_camYaw) * cosf(m_camPitch)) * m_camDistance;
+		m_matView = glm::lookAtRH(camPosition, m_camForward, m_camUp);
+	}
+	else if (m_camType == CameraType::firstPerson)
+	{
+		glm::quat yAxisRot = glm::angleAxis(-glm::radians(m_mouseXRel * m_mouseSensitivity), m_camUp);
+		m_camForward = glm::normalize(yAxisRot * m_camForward);
+		m_camRight = glm::normalize(glm::cross(m_camForward, m_camUp));
+
+		glm::quat xAxisRot = glm::angleAxis(-glm::radians(m_mouseYRel * m_mouseSensitivity), m_camRight);
+		m_camForward = glm::normalize(xAxisRot * m_camForward);
+
+		m_matView = glm::lookAtRH(camPosition, camPosition + m_camForward, m_camUp);
+		m_mouseXRel = 0;
+		m_mouseYRel = 0;
+	}
+	m_viewProjMatrix = m_matProj * m_matView;
+
 	// traverse entire scene and record MDI draw commands
-	glm::vec3 camPosition = glm::vec3(cosf(m_camYaw) * cosf(m_camPitch), sinf(m_camPitch), sinf(m_camYaw) * cosf(m_camPitch)) * m_camDistance;
-
-	const float aspectRatio = m_width / static_cast<float>(m_height);
-	glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-	glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
-	glm::mat4 matViewProj = matProj * matView;
-
 	// push root nodes to render-stack
 	m_nodeRenderStack.clear();
 	uint32_t nodeId = m_rootNodeId;
@@ -1485,7 +1558,7 @@ void Application::render()
 				// per render-item data
 				res.renderItemPtr[drawIndex] = RenderItem
 				{
-					.wvp = matViewProj * matWorld,
+					.wvp = m_viewProjMatrix * matWorld,
 					.worldMatrix = matWorld,
 					.materialIndex = subMesh.materialId - 1
 				};
@@ -2140,6 +2213,12 @@ bool Application::createIndirectDrawBuffers()
 		res.renderItemPtr = reinterpret_cast<RenderItem *>(riBuffPtr);
 	}
 	return true;
+}
+
+void Application::updateProjectionMatrix()
+{
+	const float aspectRatio = m_width / static_cast<float>(m_height);
+	m_matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
 }
 
 GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage)

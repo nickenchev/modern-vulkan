@@ -76,6 +76,11 @@ struct Texture
 	uint32_t samplerId = 0;
 };
 
+enum class CameraType
+{
+	orbit, firstPerson
+};
+
 class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
@@ -158,9 +163,23 @@ class Application
 	std::vector<std::pair<Node *, glm::mat4>> m_nodeRenderStack;
 
 	// camera related
+	uint32_t m_cameraNodeId = 0;
+	CameraType m_camType = CameraType::firstPerson;
 	float m_camDistance = 3;
 	float m_camYaw = glm::half_pi<float>();
 	float m_camPitch = 0;
+	glm::vec3 m_camForward = glm::vec3(0, 0, 1);
+	glm::vec3 m_camRight = glm::vec3(1, 0, 0);
+	glm::vec3 m_camUp = glm::vec3(0, 1, 0);
+
+	glm::mat4 m_matView;
+	glm::mat4 m_matProj;
+	glm::mat4 m_viewProjMatrix;
+
+	// mouse related
+	float m_mouseXRel = 0;
+	float m_mouseYRel = 0;
+	float m_mouseSensitivity = 0.3f;
 
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();
@@ -179,6 +198,7 @@ class Application
 	bool createCommandBuffers();
 	bool createDescriptorSets();
 	bool createIndirectDrawBuffers();
+	void updateProjectionMatrix();
 	void render();
 
 	VkCommandBuffer startTransientCommandBuffer();
