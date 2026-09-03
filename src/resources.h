@@ -35,3 +35,10 @@ struct Image
 	int channels;
 	unsigned char *data;
 };
+
+struct Camera
+{
+	float fovY = 65.0f;
+	float nearPlane = 0.01f;
+	float farPlane = 1000.0f;
+};

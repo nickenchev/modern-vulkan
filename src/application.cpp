@@ -110,8 +110,11 @@ bool Application::loadData()
 
 	// setup a camera node
 	auto [camNode, camNodeId] = m_nodeWorld.createNode();
-	camNode.setTranslation(glm::vec3(0, 4, 0));
 	m_cameraNodeId = camNodeId;
+	camNode.setTranslation(glm::vec3(1, 1.5, 5));
+	m_camUp = glm::vec3(0, 1, 0);
+	m_camForward = glm::vec3(-1, 0, 0);
+	m_camRight = glm::cross(m_camForward, m_camUp);
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
@@ -440,6 +443,10 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 	{
 		node.meshId = meshIds[tg3Node.mesh];
 	}
+	else if (tg3Node.camera != -1)
+	{
+		const tg3_camera &tg3Camera = model.cameras[tg3Node.camera];
+	}
 
 	if (prevSiblingId)
 	{
@@ -596,7 +603,7 @@ void Application::run()
 		}
 
 		// handle basic cam movement
-		constexpr float speed = 1.0f;
+		constexpr float speed = 3.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 
@@ -1505,16 +1512,18 @@ void Application::render()
 	if (m_camType == CameraType::orbit)
 	{
 		camPosition = glm::vec3(cosf(m_camYaw) * cosf(m_camPitch), sinf(m_camPitch), sinf(m_camYaw) * cosf(m_camPitch)) * m_camDistance;
-		m_matView = glm::lookAtRH(camPosition, m_camForward, m_camUp);
+		m_matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 	}
 	else if (m_camType == CameraType::firstPerson)
 	{
+		const bool is6DegFree = false;
 		glm::quat yAxisRot = glm::angleAxis(-glm::radians(m_mouseXRel * m_mouseSensitivity), m_camUp);
 		m_camForward = glm::normalize(yAxisRot * m_camForward);
-		m_camRight = glm::normalize(glm::cross(m_camForward, m_camUp));
+		m_camRight = glm::normalize(glm::cross(m_camForward, is6DegFree ? m_camUp : glm::vec3(0, 1, 0)));
 
 		glm::quat xAxisRot = glm::angleAxis(-glm::radians(m_mouseYRel * m_mouseSensitivity), m_camRight);
 		m_camForward = glm::normalize(xAxisRot * m_camForward);
+		m_camUp = glm::normalize(glm::cross(m_camRight, m_camForward));
 
 		m_matView = glm::lookAtRH(camPosition, camPosition + m_camForward, m_camUp);
 		m_mouseXRel = 0;
@@ -1642,8 +1651,7 @@ void Application::render()
 		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the image
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // keep data for presentation
-		.clearValue{.color{0.3, 0.3, 1, 1}}
-		//.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
+		.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
 
 	};
 	VkRenderingAttachmentInfo depthAttachInfo
@@ -2218,7 +2226,7 @@ bool Application::createIndirectDrawBuffers()
 void Application::updateProjectionMatrix()
 {
 	const float aspectRatio = m_width / static_cast<float>(m_height);
-	m_matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
+	m_matProj = glm::perspectiveRH(glm::radians(65.0f), aspectRatio, 0.01f, 1000.0f);
 }
 
 GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage)

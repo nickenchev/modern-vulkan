@@ -90,8 +90,8 @@ class Application
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
 
 	SDL_Window* m_window = nullptr;
-	uint32_t m_width = 1280;
-	uint32_t m_height = 720;
+	uint32_t m_width = 1920;
+	uint32_t m_height = 1080;
 	bool m_running = false;
     uint64_t m_frameIndex = 0;
     uint64_t m_nextSignalValue = MaxFramesInFlight + 1;
@@ -168,9 +168,9 @@ class Application
 	float m_camDistance = 3;
 	float m_camYaw = glm::half_pi<float>();
 	float m_camPitch = 0;
-	glm::vec3 m_camForward = glm::vec3(0, 0, 1);
-	glm::vec3 m_camRight = glm::vec3(1, 0, 0);
-	glm::vec3 m_camUp = glm::vec3(0, 1, 0);
+	glm::vec3 m_camForward;
+	glm::vec3 m_camRight;
+	glm::vec3 m_camUp;
 
 	glm::mat4 m_matView;
 	glm::mat4 m_matProj;
