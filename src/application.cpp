@@ -101,20 +101,12 @@ bool Application::loadData()
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	loadGltf("D:/gltf Models/modular-demo/modular-demo.gltf");
+	loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
 
 	// scale root node
 	Node &root = m_nodeWorld.getNode(m_rootNodeId);
 	//root.setScale(glm::vec3(0.01, 0.01, 0.01));
 	//root.setTranslation(glm::vec3(0, 1, 0));
-
-	// setup a camera node
-	auto [camNode, camNodeId] = m_nodeWorld.createNode();
-	m_cameraNodeId = camNodeId;
-	camNode.setTranslation(glm::vec3(1, 1.5, 5));
-	m_camUp = glm::vec3(0, 1, 0);
-	m_camForward = glm::vec3(-1, 0, 0);
-	m_camRight = glm::cross(m_camForward, m_camUp);
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
@@ -445,7 +437,16 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 	}
 	else if (tg3Node.camera != -1)
 	{
+		// TODO: Support multiple camera objects
 		const tg3_camera &tg3Camera = model.cameras[tg3Node.camera];
+		m_camera.fovY = tg3Camera.perspective.yfov;
+		m_camera.nearPlane = tg3Camera.perspective.znear;
+		m_camera.farPlane = tg3Camera.perspective.zfar;
+		m_cameraNodeId = nodeId;
+
+		m_camera.forward = node.getRotation() * glm::vec3(0, 0, -1);
+		m_camera.right = node.getRotation() * glm::vec3(1, 0, 0);
+		m_camera.up = glm::cross(m_camera.right, m_camera.forward);
 	}
 
 	if (prevSiblingId)
@@ -581,21 +582,21 @@ void Application::run()
 			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION)
 			{
-				m_mouseXRel = static_cast<float>(event.motion.xrel);
-				m_mouseYRel = static_cast<float>(event.motion.yrel);
+				m_mouseXRel += static_cast<float>(event.motion.xrel);
+				m_mouseYRel += static_cast<float>(event.motion.yrel);
 			}
 			else if (event.type == SDL_EVENT_KEY_UP)
 			{
 				if (event.key.scancode == SDL_SCANCODE_GRAVE)
 				{
-					if (m_camType == CameraType::firstPerson)
+					if (m_camera.type == CameraType::firstPerson)
 					{
-						m_camType = CameraType::orbit;
+						m_camera.type = CameraType::orbit;
 						SDL_SetWindowRelativeMouseMode(m_window, false);
 					}
 					else
 					{
-						m_camType = CameraType::firstPerson;
+						m_camera.type = CameraType::firstPerson;
 						SDL_SetWindowRelativeMouseMode(m_window, true);
 					}
 				}
@@ -603,63 +604,56 @@ void Application::run()
 		}
 
 		// handle basic cam movement
-		constexpr float speed = 3.0f;
+		constexpr float speed = 4.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 
-		if (m_camType == CameraType::orbit)
+		if (m_camera.type == CameraType::orbit)
 		{
-			if (keys[SDL_SCANCODE_A])
-			{
-				m_camYaw += speed * deltaTime;
-			}
-			if (keys[SDL_SCANCODE_D])
-			{
-				m_camYaw -= speed * deltaTime;
-			}
 			if (keys[SDL_SCANCODE_W])
 			{
-				m_camDistance -= speed * deltaTime;
-				m_camDistance = std::max(m_camDistance, epsilon);
+				m_camera.distance -= speed * deltaTime;
+				m_camera.distance = std::max(m_camera.distance, epsilon);
 			}
 			if (keys[SDL_SCANCODE_S])
 			{
-				m_camDistance += speed * deltaTime;
+				m_camera.distance += speed * deltaTime;
 			}
 			if (keys[SDL_SCANCODE_UP])
 			{
-				m_camPitch += speed * deltaTime;
-				m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
+				m_camera.pitch += speed * deltaTime;
+				m_camera.pitch = std::clamp(m_camera.pitch, -pitchLimit, pitchLimit);
 			}
 			if (keys[SDL_SCANCODE_DOWN])
 			{
-				m_camPitch -= speed * deltaTime;
-				m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
+				m_camera.pitch -= speed * deltaTime;
+				m_camera.pitch = std::clamp(m_camera.pitch, -pitchLimit, pitchLimit);
 			}
 		}
-		else if (m_camType == CameraType::firstPerson)
+		else if (m_camera.type == CameraType::firstPerson)
 		{
 			Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
 			glm::vec3 translation = camNode.getTranslation();
 			if (keys[SDL_SCANCODE_A])
 			{
-				translation -= m_camRight * speed * deltaTime;
+				translation -= m_camera.right * speed * deltaTime;
 			}
 			if (keys[SDL_SCANCODE_D])
 			{
-				translation += m_camRight * speed * deltaTime;
+				translation += m_camera.right * speed * deltaTime;
 			}
 			if (keys[SDL_SCANCODE_W])
 			{
-				translation += m_camForward * speed * deltaTime;
+				translation += m_moveDirection * speed * deltaTime;
 			}
 			if (keys[SDL_SCANCODE_S])
 			{
-				translation -= m_camForward * speed * deltaTime;
+				translation -= m_moveDirection * speed * deltaTime;
 			}
 			camNode.setTranslation(translation);
 		}
 
+		updateViewMatrix();
 		render();
 	}
 }
@@ -1506,31 +1500,6 @@ void Application::render()
 		m_requireSwapchainRecreate = true;
 	}
 
-	// camera and view matrix
-	Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
-	glm::vec3 camPosition = camNode.getTranslation();
-	if (m_camType == CameraType::orbit)
-	{
-		camPosition = glm::vec3(cosf(m_camYaw) * cosf(m_camPitch), sinf(m_camPitch), sinf(m_camYaw) * cosf(m_camPitch)) * m_camDistance;
-		m_matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-	}
-	else if (m_camType == CameraType::firstPerson)
-	{
-		const bool is6DegFree = false;
-		glm::quat yAxisRot = glm::angleAxis(-glm::radians(m_mouseXRel * m_mouseSensitivity), m_camUp);
-		m_camForward = glm::normalize(yAxisRot * m_camForward);
-		m_camRight = glm::normalize(glm::cross(m_camForward, is6DegFree ? m_camUp : glm::vec3(0, 1, 0)));
-
-		glm::quat xAxisRot = glm::angleAxis(-glm::radians(m_mouseYRel * m_mouseSensitivity), m_camRight);
-		m_camForward = glm::normalize(xAxisRot * m_camForward);
-		m_camUp = glm::normalize(glm::cross(m_camRight, m_camForward));
-
-		m_matView = glm::lookAtRH(camPosition, camPosition + m_camForward, m_camUp);
-		m_mouseXRel = 0;
-		m_mouseYRel = 0;
-	}
-	m_viewProjMatrix = m_matProj * m_matView;
-
 	// traverse entire scene and record MDI draw commands
 	// push root nodes to render-stack
 	m_nodeRenderStack.clear();
@@ -2227,6 +2196,39 @@ void Application::updateProjectionMatrix()
 {
 	const float aspectRatio = m_width / static_cast<float>(m_height);
 	m_matProj = glm::perspectiveRH(glm::radians(65.0f), aspectRatio, 0.01f, 1000.0f);
+}
+
+void Application::updateViewMatrix()
+{
+	m_camera.yaw -= glm::radians(m_mouseXRel * m_mouseSensitivity);
+	m_camera.pitch -= glm::radians(m_mouseYRel * m_mouseSensitivity);
+	m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
+	m_mouseXRel = 0;
+	m_mouseYRel = 0;
+
+	// camera and view matrix
+	Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
+	glm::vec3 camPosition = camNode.getTranslation();
+	if (m_camera.type == CameraType::orbit)
+	{
+		camPosition = glm::vec3(cosf(m_camera.yaw) * cosf(m_camera.pitch), sinf(m_camera.pitch), sinf(m_camera.yaw) * cosf(m_camera.pitch)) * m_camera.distance;
+		camNode.setTranslation(camPosition);
+		m_matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+	}
+	else if (m_camera.type == CameraType::firstPerson)
+	{
+		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
+		camNode.setRotation(cameraQuat);
+		const bool is6DegFree = false;
+		m_camera.forward = glm::normalize(cameraQuat * glm::vec3(0, 0, -1));
+		m_camera.right = glm::normalize(glm::cross(m_camera.forward, is6DegFree ? m_camera.up : glm::vec3(0, 1, 0)));
+		m_camera.up = glm::normalize(glm::cross(m_camera.right, m_camera.forward));
+		m_matView = glm::lookAtRH(camPosition, camPosition + m_camera.forward, m_camera.up);
+
+		glm::quat movementQuat = glm::quat(glm::vec3(is6DegFree ? m_camera.pitch : 0.0f, m_camera.yaw, 0.0f));
+		m_moveDirection = movementQuat * glm::vec3(0, 0, -1);
+	}
+	m_viewProjMatrix = m_matProj * m_matView;
 }
 
 GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage)

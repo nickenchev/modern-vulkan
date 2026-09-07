@@ -36,9 +36,22 @@ struct Image
 	unsigned char *data;
 };
 
+
+enum class CameraType
+{
+	orbit, firstPerson
+};
+
 struct Camera
 {
+	CameraType type = CameraType::firstPerson;
 	float fovY = 65.0f;
 	float nearPlane = 0.01f;
 	float farPlane = 1000.0f;
+	glm::vec3 forward = glm::vec3(0, 0, -1);
+	glm::vec3 right = glm::vec3(1, 0, 0);
+	glm::vec3 up = glm::vec3(0, 1, 0);
+	float distance = 3;
+	float yaw = glm::half_pi<float>();
+	float pitch = 0;
 };

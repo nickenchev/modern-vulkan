@@ -76,11 +76,6 @@ struct Texture
 	uint32_t samplerId = 0;
 };
 
-enum class CameraType
-{
-	orbit, firstPerson
-};
-
 class Application
 {
 	constexpr static uint32_t VulkanVersion{ VK_API_VERSION_1_4 };
@@ -164,13 +159,8 @@ class Application
 
 	// camera related
 	uint32_t m_cameraNodeId = 0;
-	CameraType m_camType = CameraType::firstPerson;
-	float m_camDistance = 3;
-	float m_camYaw = glm::half_pi<float>();
-	float m_camPitch = 0;
-	glm::vec3 m_camForward;
-	glm::vec3 m_camRight;
-	glm::vec3 m_camUp;
+	Camera m_camera;
+	glm::vec3 m_moveDirection = glm::vec3(0, 0, 0);
 
 	glm::mat4 m_matView;
 	glm::mat4 m_matProj;
@@ -199,6 +189,7 @@ class Application
 	bool createDescriptorSets();
 	bool createIndirectDrawBuffers();
 	void updateProjectionMatrix();
+	void updateViewMatrix();
 	void render();
 
 	VkCommandBuffer startTransientCommandBuffer();

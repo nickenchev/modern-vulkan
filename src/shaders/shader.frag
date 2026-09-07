@@ -14,7 +14,7 @@ layout(set = 0, binding = 0) uniform sampler2D textures[];
 void main()
 {
     vec3 nNormal = normalize(inNormal);
-    vec3 lightDirection = normalize(vec3(0, -1, -1));
+    vec3 lightDirection = normalize(vec3(-0.75, -1, 0));
     float d = max(dot(nNormal, -lightDirection), 0);
     vec4 texColor = texture(textures[inTextureIndex], inUV);
 
