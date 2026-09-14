@@ -160,7 +160,8 @@ class Application
 	// camera related
 	uint32_t m_cameraNodeId = 0;
 	Camera m_camera;
-	glm::vec3 m_moveDirection = glm::vec3(0, 0, 0);
+	glm::vec3 m_forwardMoveDir;
+	bool m_flyMode = true;
 
 	glm::mat4 m_matView;
 	glm::mat4 m_matProj;

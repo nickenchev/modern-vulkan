@@ -94,19 +94,25 @@ bool Application::loadData()
 		.samplerId = whiteSamplerId
 		});
 
-	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
-	//gltfPath = "";
 	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
 	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
-	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
+	loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+	//loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
 
 	// scale root node
 	Node &root = m_nodeWorld.getNode(m_rootNodeId);
-	//root.setScale(glm::vec3(0.01, 0.01, 0.01));
-	//root.setTranslation(glm::vec3(0, 1, 0));
+	root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
+
+	// Optional: Create a camera node if it doesn't exist
+	if (!m_cameraNodeId)
+	{
+		auto [camNode, camNodeId] = m_nodeWorld.createNode();
+		m_cameraNodeId = camNodeId;
+		camNode.setTranslation(glm::vec3(0, 1, 0));
+	}
+	assert(m_cameraNodeId && "Camera node must be initialized");
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
@@ -444,9 +450,12 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		m_camera.farPlane = tg3Camera.perspective.zfar;
 		m_cameraNodeId = nodeId;
 
+		// initialize cam orientation
 		m_camera.forward = node.getRotation() * glm::vec3(0, 0, -1);
 		m_camera.right = node.getRotation() * glm::vec3(1, 0, 0);
 		m_camera.up = glm::cross(m_camera.right, m_camera.forward);
+		m_camera.yaw = atan2(-m_camera.forward.x, -m_camera.forward.z);
+		m_camera.pitch = asinf(m_camera.forward.y);
 	}
 
 	if (prevSiblingId)
@@ -552,9 +561,7 @@ void Application::shutdown()
 
 void Application::run()
 {
-	assert(m_cameraNodeId && "Camera node must be initialized");
 	updateProjectionMatrix();
-
 	m_running = true;
 	const bool *keys = SDL_GetKeyboardState(nullptr);
 
@@ -600,11 +607,16 @@ void Application::run()
 						SDL_SetWindowRelativeMouseMode(m_window, true);
 					}
 				}
+				else if (event.key.scancode == SDL_SCANCODE_F11)
+				{
+					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
+					break;
+				}
 			}
 		}
 
 		// handle basic cam movement
-		constexpr float speed = 4.0f;
+		constexpr float speed = 3.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 
@@ -644,11 +656,11 @@ void Application::run()
 			}
 			if (keys[SDL_SCANCODE_W])
 			{
-				translation += m_moveDirection * speed * deltaTime;
+				translation += m_forwardMoveDir * speed * deltaTime;
 			}
 			if (keys[SDL_SCANCODE_S])
 			{
-				translation -= m_moveDirection * speed * deltaTime;
+				translation -= m_forwardMoveDir * speed * deltaTime;
 			}
 			camNode.setTranslation(translation);
 		}
@@ -1620,8 +1632,8 @@ void Application::render()
 		.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // clear the image
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // keep data for presentation
-		.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
-
+		//.clearValue{.color{0.01f, 0.01f, 0.01f, 1}}
+		.clearValue{.color{0.15f, 0.15f, 1.0f, 1}}
 	};
 	VkRenderingAttachmentInfo depthAttachInfo
 	{
@@ -2200,33 +2212,45 @@ void Application::updateProjectionMatrix()
 
 void Application::updateViewMatrix()
 {
-	m_camera.yaw -= glm::radians(m_mouseXRel * m_mouseSensitivity);
-	m_camera.pitch -= glm::radians(m_mouseYRel * m_mouseSensitivity);
+	m_camera.yaw += glm::radians(-m_mouseXRel * m_mouseSensitivity);
+	m_camera.pitch += glm::radians(-m_mouseYRel * m_mouseSensitivity);
 	m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
 	m_mouseXRel = 0;
 	m_mouseYRel = 0;
 
 	// camera and view matrix
 	Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
-	glm::vec3 camPosition = camNode.getTranslation();
 	if (m_camera.type == CameraType::orbit)
 	{
-		camPosition = glm::vec3(cosf(m_camera.yaw) * cosf(m_camera.pitch), sinf(m_camera.pitch), sinf(m_camera.yaw) * cosf(m_camera.pitch)) * m_camera.distance;
+		glm::vec3 camPosition = glm::vec3(cosf(m_camera.yaw) * cosf(m_camera.pitch), sinf(m_camera.pitch), sinf(m_camera.yaw) * cosf(m_camera.pitch)) * m_camera.distance;
+		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
 		camNode.setTranslation(camPosition);
+		camNode.setRotation(cameraQuat);
 		m_matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 	}
 	else if (m_camera.type == CameraType::firstPerson)
 	{
+		glm::vec3 camPosition = camNode.getTranslation();
 		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
 		camNode.setRotation(cameraQuat);
-		const bool is6DegFree = false;
-		m_camera.forward = glm::normalize(cameraQuat * glm::vec3(0, 0, -1));
-		m_camera.right = glm::normalize(glm::cross(m_camera.forward, is6DegFree ? m_camera.up : glm::vec3(0, 1, 0)));
-		m_camera.up = glm::normalize(glm::cross(m_camera.right, m_camera.forward));
-		m_matView = glm::lookAtRH(camPosition, camPosition + m_camera.forward, m_camera.up);
 
-		glm::quat movementQuat = glm::quat(glm::vec3(is6DegFree ? m_camera.pitch : 0.0f, m_camera.yaw, 0.0f));
-		m_moveDirection = movementQuat * glm::vec3(0, 0, -1);
+		// view matrix is the inverse of the camera node's transformation matrix
+		// m_matView = glm::inverse(camNode.getTransform()); // this is a full matrix inverse calc
+		m_matView = glm::mat4_cast(glm::conjugate(cameraQuat)) * glm::translate(glm::mat4(1.0f), -camPosition);
+		glm::mat3 rotMat = glm::mat3_cast(cameraQuat);
+		m_camera.right = rotMat[0]; // X basis vector
+		m_camera.up = rotMat[1]; // Y basis vector
+		m_camera.forward = -rotMat[2]; // Z basis vector
+
+		if (!m_flyMode)
+		{
+			m_forwardMoveDir = glm::vec3(-sin(m_camera.yaw), 0, -cos(m_camera.yaw));
+		}
+		else
+		{
+			const float cosPitch = cos(m_camera.pitch);
+			m_forwardMoveDir = glm::vec3(-sin(m_camera.yaw) * cosPitch, sin(m_camera.pitch), -cos(m_camera.yaw) * cosPitch);
+		}
 	}
 	m_viewProjMatrix = m_matProj * m_matView;
 }

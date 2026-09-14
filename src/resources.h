@@ -52,6 +52,6 @@ struct Camera
 	glm::vec3 right = glm::vec3(1, 0, 0);
 	glm::vec3 up = glm::vec3(0, 1, 0);
 	float distance = 3;
-	float yaw = glm::half_pi<float>();
+	float yaw = 0;
 	float pitch = 0;
 };
