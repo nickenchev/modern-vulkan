@@ -98,12 +98,12 @@ bool Application::loadData()
 	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
-	loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	//loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
+	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+	loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
 
 	// scale root node
-	Node &root = m_nodeWorld.getNode(m_rootNodeId);
-	root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
+	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
+	//root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
 
 	// Optional: Create a camera node if it doesn't exist
 	if (!m_cameraNodeId)
@@ -416,6 +416,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 	auto [node, nodeId] = nodeWorld.createNode();
 	node.parentId = parentId;
 
+	// retrieve the node's local transform
 	if (tg3Node.has_matrix)
 	{
 		glm::mat4 transform(1);
@@ -437,6 +438,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		node.setScale(scale);
 	}
 
+	// mesh or camera being loaded
 	if (tg3Node.mesh != -1)
 	{
 		node.meshId = meshIds[tg3Node.mesh];
@@ -596,16 +598,7 @@ void Application::run()
 			{
 				if (event.key.scancode == SDL_SCANCODE_GRAVE)
 				{
-					if (m_camera.type == CameraType::firstPerson)
-					{
-						m_camera.type = CameraType::orbit;
-						SDL_SetWindowRelativeMouseMode(m_window, false);
-					}
-					else
-					{
-						m_camera.type = CameraType::firstPerson;
-						SDL_SetWindowRelativeMouseMode(m_window, true);
-					}
+					m_flyMode = !m_flyMode;
 				}
 				else if (event.key.scancode == SDL_SCANCODE_F11)
 				{
@@ -2207,7 +2200,7 @@ bool Application::createIndirectDrawBuffers()
 void Application::updateProjectionMatrix()
 {
 	const float aspectRatio = m_width / static_cast<float>(m_height);
-	m_matProj = glm::perspectiveRH(glm::radians(65.0f), aspectRatio, 0.01f, 1000.0f);
+	m_matProj = glm::perspectiveRH(m_camera.fovY, aspectRatio, m_camera.nearPlane, m_camera.farPlane);
 }
 
 void Application::updateViewMatrix()
@@ -2242,14 +2235,13 @@ void Application::updateViewMatrix()
 		m_camera.up = rotMat[1]; // Y basis vector
 		m_camera.forward = -rotMat[2]; // Z basis vector
 
-		if (!m_flyMode)
+		if (m_flyMode)
 		{
-			m_forwardMoveDir = glm::vec3(-sin(m_camera.yaw), 0, -cos(m_camera.yaw));
+			m_forwardMoveDir = m_camera.forward;
 		}
 		else
 		{
-			const float cosPitch = cos(m_camera.pitch);
-			m_forwardMoveDir = glm::vec3(-sin(m_camera.yaw) * cosPitch, sin(m_camera.pitch), -cos(m_camera.yaw) * cosPitch);
+			m_forwardMoveDir = glm::vec3(-sin(m_camera.yaw), 0, -cos(m_camera.yaw));
 		}
 	}
 	m_viewProjMatrix = m_matProj * m_matView;
