@@ -168,8 +168,6 @@ class Application
 	glm::mat4 m_viewProjMatrix;
 
 	// mouse related
-	float m_mouseXRel = 0;
-	float m_mouseYRel = 0;
 	float m_mouseSensitivity = 0.3f;
 
 	void showError(const std::string &errorMessasge) const;

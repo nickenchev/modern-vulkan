@@ -580,19 +580,18 @@ void Application::run()
 			if (event.type == SDL_EVENT_QUIT)
 			{
 				m_running = false;
-				break;
 			}
 			else if (event.type == SDL_EVENT_WINDOW_RESIZED)
 			{
 				m_width = event.window.data1;
 				m_height = event.window.data2;
 				updateProjectionMatrix();
-				break;
 			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION)
 			{
-				m_mouseXRel += static_cast<float>(event.motion.xrel);
-				m_mouseYRel += static_cast<float>(event.motion.yrel);
+				m_camera.yaw += glm::radians(-event.motion.xrel * m_mouseSensitivity);
+				m_camera.pitch += glm::radians(-event.motion.yrel * m_mouseSensitivity);
+				m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
 			}
 			else if (event.type == SDL_EVENT_KEY_UP)
 			{
@@ -603,7 +602,6 @@ void Application::run()
 				else if (event.key.scancode == SDL_SCANCODE_F11)
 				{
 					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
-					break;
 				}
 			}
 		}
@@ -612,6 +610,9 @@ void Application::run()
 		constexpr float speed = 3.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
+		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
+		Node& camNode = m_nodeWorld.getNode(m_cameraNodeId);
+		camNode.setRotation(cameraQuat);
 
 		if (m_camera.type == CameraType::orbit)
 		{
@@ -637,8 +638,23 @@ void Application::run()
 		}
 		else if (m_camera.type == CameraType::firstPerson)
 		{
-			Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
 			glm::vec3 translation = camNode.getTranslation();
+
+			// update the basis vectors
+			glm::mat3 rotMat = glm::mat3_cast(cameraQuat);
+			m_camera.right = rotMat[0]; // X basis vector
+			m_camera.up = rotMat[1]; // Y basis vector
+			m_camera.forward = -rotMat[2]; // Z basis vector
+
+			if (m_flyMode)
+			{
+				m_forwardMoveDir = m_camera.forward;
+			}
+			else
+			{
+				m_forwardMoveDir = -glm::vec3(sin(m_camera.yaw), 0, cos(m_camera.yaw));
+			}
+
 			if (keys[SDL_SCANCODE_A])
 			{
 				translation -= m_camera.right * speed * deltaTime;
@@ -2201,48 +2217,26 @@ void Application::updateProjectionMatrix()
 {
 	const float aspectRatio = m_width / static_cast<float>(m_height);
 	m_matProj = glm::perspectiveRH(m_camera.fovY, aspectRatio, m_camera.nearPlane, m_camera.farPlane);
-}
+} 
 
 void Application::updateViewMatrix()
 {
-	m_camera.yaw += glm::radians(-m_mouseXRel * m_mouseSensitivity);
-	m_camera.pitch += glm::radians(-m_mouseYRel * m_mouseSensitivity);
-	m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
-	m_mouseXRel = 0;
-	m_mouseYRel = 0;
-
 	// camera and view matrix
 	Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
 	if (m_camera.type == CameraType::orbit)
 	{
 		glm::vec3 camPosition = glm::vec3(cosf(m_camera.yaw) * cosf(m_camera.pitch), sinf(m_camera.pitch), sinf(m_camera.yaw) * cosf(m_camera.pitch)) * m_camera.distance;
-		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
 		camNode.setTranslation(camPosition);
-		camNode.setRotation(cameraQuat);
 		m_matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 	}
 	else if (m_camera.type == CameraType::firstPerson)
 	{
 		glm::vec3 camPosition = camNode.getTranslation();
-		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
-		camNode.setRotation(cameraQuat);
+		glm::quat cameraQuat = camNode.getRotation();
 
 		// view matrix is the inverse of the camera node's transformation matrix
 		// m_matView = glm::inverse(camNode.getTransform()); // this is a full matrix inverse calc
 		m_matView = glm::mat4_cast(glm::conjugate(cameraQuat)) * glm::translate(glm::mat4(1.0f), -camPosition);
-		glm::mat3 rotMat = glm::mat3_cast(cameraQuat);
-		m_camera.right = rotMat[0]; // X basis vector
-		m_camera.up = rotMat[1]; // Y basis vector
-		m_camera.forward = -rotMat[2]; // Z basis vector
-
-		if (m_flyMode)
-		{
-			m_forwardMoveDir = m_camera.forward;
-		}
-		else
-		{
-			m_forwardMoveDir = glm::vec3(-sin(m_camera.yaw), 0, -cos(m_camera.yaw));
-		}
 	}
 	m_viewProjMatrix = m_matProj * m_matView;
 }
