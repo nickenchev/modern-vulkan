@@ -73,8 +73,8 @@ class Application
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
 
 	SDL_Window* m_window = nullptr;
-	uint32_t m_width = 1280;
-	uint32_t m_height = 720;
+	uint32_t m_width = 1920;
+	uint32_t m_height = 1080;
 	bool m_running = false;
     uint64_t m_frameIndex = 0;
     uint64_t m_nextSignalValue = MaxFramesInFlight + 1;
@@ -145,10 +145,18 @@ class Application
 	uint32_t m_lastRootNodeId = 0;
 	std::vector<std::pair<Node *, glm::mat4>> m_nodeRenderStack;
 
-	// camera
-	float m_camDistance = 3;
-	float m_camYaw = glm::half_pi<float>();
-	float m_camPitch = 0;
+	// camera related
+	uint32_t m_cameraNodeId = 0;
+	Camera m_camera;
+	glm::vec3 m_forwardMoveDir;
+	bool m_flyMode = false;
+
+	glm::mat4 m_matView;
+	glm::mat4 m_matProj;
+	glm::mat4 m_viewProjMatrix;
+
+	// mouse related
+	float m_mouseSensitivity = 0.3f;
 
 	// lights
 	std::vector<Light> m_lights;
@@ -170,6 +178,8 @@ class Application
 	bool createCommandBuffers();
 	bool createDescriptorSets();
 	bool createIndirectDrawBuffers();
+	void updateProjectionMatrix();
+	void updateViewMatrix();
 	void render();
 
 	VkCommandBuffer startTransientCommandBuffer();

@@ -28,6 +28,7 @@ bool Application::initialize()
 		showError("Error creating window");
 		return false;
 	}
+	SDL_SetWindowRelativeMouseMode(m_window, true);
 
 	// setup renderer specifits here
 	m_nodeWorld.initialize(1024); // maximum node-world size
@@ -93,19 +94,25 @@ bool Application::loadData()
 		.samplerId = whiteSamplerId
 		});
 
-	//std::string gltfPath = "D:/glTF-Sample-Models/2.0/VC/glTF/VC.gltf";
-	//gltfPath = "";
 	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
 	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	loadGltf("D:/gltf models/modular-demo/modular-demo.gltf");
+	loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
 
 	// scale root node
 	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
-	//root.setScale(glm::vec3(0.01, 0.01, 0.01));
-	//root.setTranslation(glm::vec3(0, 1, 0));
+	//root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
+
+	// Optional: Create a camera node if it doesn't exist
+	if (!m_cameraNodeId)
+	{
+		auto [camNode, camNodeId] = m_nodeWorld.createNode();
+		m_cameraNodeId = camNodeId;
+		camNode.setTranslation(glm::vec3(0, 1, 0));
+	}
+	assert(m_cameraNodeId && "Camera node must be initialized");
 
 	// staging buffers for geo data
 	GPUBuffer vertexBufferStage = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, vertexBufferBytes, true, VMA_MEMORY_USAGE_AUTO);
@@ -414,6 +421,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 	auto [node, nodeId] = nodeWorld.createNode();
 	node.parentId = parentId;
 
+	// retrieve the node's local transform
 	if (tg3Node.has_matrix)
 	{
 		glm::mat4 transform(1);
@@ -435,9 +443,26 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		node.setScale(scale);
 	}
 
+	// mesh or camera being loaded
 	if (tg3Node.mesh != -1)
 	{
 		node.meshId = meshIds[tg3Node.mesh];
+	}
+	else if (tg3Node.camera != -1)
+	{
+		// TODO: Support multiple camera objects
+		const tg3_camera &tg3Camera = model.cameras[tg3Node.camera];
+		m_camera.fovY = tg3Camera.perspective.yfov;
+		m_camera.nearPlane = tg3Camera.perspective.znear;
+		m_camera.farPlane = tg3Camera.perspective.zfar;
+		m_cameraNodeId = nodeId;
+
+		// initialize cam orientation
+		m_camera.forward = node.getRotation() * glm::vec3(0, 0, -1);
+		m_camera.right = node.getRotation() * glm::vec3(1, 0, 0);
+		m_camera.up = glm::cross(m_camera.right, m_camera.forward);
+		m_camera.yaw = atan2(-m_camera.forward.x, -m_camera.forward.z);
+		m_camera.pitch = asinf(m_camera.forward.y);
 	}
 
 	if (prevSiblingId)
@@ -543,6 +568,7 @@ void Application::shutdown()
 
 void Application::run()
 {
+	updateProjectionMatrix();
 	m_running = true;
 	const bool *keys = SDL_GetKeyboardState(nullptr);
 
@@ -559,49 +585,101 @@ void Application::run()
 			if (event.type == SDL_EVENT_QUIT)
 			{
 				m_running = false;
-				break;
 			}
 			else if (event.type == SDL_EVENT_WINDOW_RESIZED)
 			{
 				m_width = event.window.data1;
 				m_height = event.window.data2;
-				break;
+				updateProjectionMatrix();
+			}
+			else if (event.type == SDL_EVENT_MOUSE_MOTION)
+			{
+				m_camera.yaw += glm::radians(-event.motion.xrel * m_mouseSensitivity);
+				m_camera.pitch += glm::radians(-event.motion.yrel * m_mouseSensitivity);
+				m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
+			}
+			else if (event.type == SDL_EVENT_KEY_UP)
+			{
+				if (event.key.scancode == SDL_SCANCODE_GRAVE)
+				{
+					m_flyMode = !m_flyMode;
+				}
+				else if (event.key.scancode == SDL_SCANCODE_F11)
+				{
+					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
+				}
 			}
 		}
 
 		// handle basic cam movement
-		constexpr float speed = 1.0f;
+		constexpr float speed = 3.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
+		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
+		Node& camNode = m_nodeWorld.getNode(m_cameraNodeId);
+		camNode.setRotation(cameraQuat);
 
-		if (keys[SDL_SCANCODE_A])
+		if (m_camera.type == CameraType::orbit)
 		{
-			m_camYaw += speed * deltaTime;
+			if (keys[SDL_SCANCODE_W])
+			{
+				m_camera.distance -= speed * deltaTime;
+				m_camera.distance = std::max(m_camera.distance, epsilon);
+			}
+			if (keys[SDL_SCANCODE_S])
+			{
+				m_camera.distance += speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_UP])
+			{
+				m_camera.pitch += speed * deltaTime;
+				m_camera.pitch = std::clamp(m_camera.pitch, -pitchLimit, pitchLimit);
+			}
+			if (keys[SDL_SCANCODE_DOWN])
+			{
+				m_camera.pitch -= speed * deltaTime;
+				m_camera.pitch = std::clamp(m_camera.pitch, -pitchLimit, pitchLimit);
+			}
 		}
-		if (keys[SDL_SCANCODE_D])
+		else if (m_camera.type == CameraType::firstPerson)
 		{
-			m_camYaw -= speed * deltaTime;
-		}
-		if (keys[SDL_SCANCODE_W])
-		{
-			m_camDistance -= speed * deltaTime;
-			m_camDistance = std::max(m_camDistance, epsilon);
-		}
-		if (keys[SDL_SCANCODE_S])
-		{
-			m_camDistance += speed * deltaTime;
-		}
-		if (keys[SDL_SCANCODE_UP])
-		{
-			m_camPitch += speed * deltaTime;
-			m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
-		}
-		if (keys[SDL_SCANCODE_DOWN])
-		{
-			m_camPitch -= speed * deltaTime;
-			m_camPitch = std::clamp(m_camPitch, -pitchLimit, pitchLimit);
+			glm::vec3 translation = camNode.getTranslation();
+
+			// update the basis vectors
+			glm::mat3 rotMat = glm::mat3_cast(cameraQuat);
+			m_camera.right = rotMat[0]; // X basis vector
+			m_camera.up = rotMat[1]; // Y basis vector
+			m_camera.forward = -rotMat[2]; // Z basis vector
+
+			if (m_flyMode)
+			{
+				m_forwardMoveDir = m_camera.forward;
+			}
+			else
+			{
+				m_forwardMoveDir = -glm::vec3(sin(m_camera.yaw), 0, cos(m_camera.yaw));
+			}
+
+			if (keys[SDL_SCANCODE_A])
+			{
+				translation -= m_camera.right * speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_D])
+			{
+				translation += m_camera.right * speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_W])
+			{
+				translation += m_forwardMoveDir * speed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_S])
+			{
+				translation -= m_forwardMoveDir * speed * deltaTime;
+			}
+			camNode.setTranslation(translation);
 		}
 
+		updateViewMatrix();
 		render();
 	}
 }
@@ -1449,13 +1527,6 @@ void Application::render()
 	}
 
 	// traverse entire scene and record MDI draw commands
-	glm::vec3 camPosition = glm::vec3(cosf(m_camYaw) * cosf(m_camPitch), sinf(m_camPitch), sinf(m_camYaw) * cosf(m_camPitch)) * m_camDistance;
-
-	const float aspectRatio = m_width / static_cast<float>(m_height);
-	glm::mat4 matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-	glm::mat4 matProj = glm::perspectiveRH(glm::radians(75.0f), aspectRatio, 0.01f, 1000.0f);
-	glm::mat4 matViewProj = matProj * matView;
-
 	// push root nodes to render-stack
 	m_nodeRenderStack.clear();
 	uint32_t nodeId = m_rootNodeId;
@@ -1491,7 +1562,7 @@ void Application::render()
 				// per render-item data
 				res.renderItemPtr[drawIndex] = RenderItem
 				{
-					.wvp = matViewProj * matWorld,
+					.wvp = m_viewProjMatrix * matWorld,
 					.worldMatrix = matWorld,
 					.materialIndex = subMesh.materialId - 1
 				};
@@ -2145,6 +2216,34 @@ bool Application::createIndirectDrawBuffers()
 		res.renderItemPtr = reinterpret_cast<RenderItem *>(riBuffPtr);
 	}
 	return true;
+}
+
+void Application::updateProjectionMatrix()
+{
+	const float aspectRatio = m_width / static_cast<float>(m_height);
+	m_matProj = glm::perspectiveRH(m_camera.fovY, aspectRatio, m_camera.nearPlane, m_camera.farPlane);
+} 
+
+void Application::updateViewMatrix()
+{
+	// camera and view matrix
+	Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
+	if (m_camera.type == CameraType::orbit)
+	{
+		glm::vec3 camPosition = glm::vec3(cosf(m_camera.yaw) * cosf(m_camera.pitch), sinf(m_camera.pitch), sinf(m_camera.yaw) * cosf(m_camera.pitch)) * m_camera.distance;
+		camNode.setTranslation(camPosition);
+		m_matView = glm::lookAtRH(camPosition, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+	}
+	else if (m_camera.type == CameraType::firstPerson)
+	{
+		glm::vec3 camPosition = camNode.getTranslation();
+		glm::quat cameraQuat = camNode.getRotation();
+
+		// view matrix is the inverse of the camera node's transformation matrix
+		// m_matView = glm::inverse(camNode.getTransform()); // this is a full matrix inverse calc
+		m_matView = glm::mat4_cast(glm::conjugate(cameraQuat)) * glm::translate(glm::mat4(1.0f), -camPosition);
+	}
+	m_viewProjMatrix = m_matProj * m_matView;
 }
 
 GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage)
