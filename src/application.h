@@ -29,6 +29,7 @@ struct FrameConstants
 	uint64_t vertexBufferAddress = 0;
 	uint64_t materialBufferAddress = 0;
 	uint64_t renderItemsAddress = 0;
+	uint64_t lightsBufferAddress = 0;
 };
 
 struct GPUImage
@@ -71,6 +72,7 @@ class Application
 	constexpr static size_t MaxTextures = 1024;
 	constexpr static VkFormat SwapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
 	constexpr static VkFormat DepthFormat{ VK_FORMAT_D32_SFLOAT };
+	constexpr static size_t MaxLights = 32;
 
 	SDL_Window* m_window = nullptr;
 	uint32_t m_width = 1920;
@@ -160,6 +162,7 @@ class Application
 
 	// lights
 	std::vector<Light> m_lights;
+	uint32_t m_lightBufferId = 0;
 
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();
@@ -192,6 +195,7 @@ class Application
 	std::vector<uint32_t> loadTextures(const tg3_model &model, const std::vector<uint32_t> &imageIds, const std::vector<uint32_t> &samplerIds);
 	std::vector<uint32_t> loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds);
 	std::vector<uint32_t> loadMeshes(const tg3_model &model, const std::vector<uint32_t> &materialIds);
+	std::vector<uint32_t> loadLights(const tg3_model& model);
 
 	std::vector<uint32_t> uploadImages(const std::vector<Image> &images);
 	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
@@ -200,7 +204,7 @@ class Application
 	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage);
 	void mapCopyBufferData(const GPUBuffer &buffer, size_t bufferOffset, void *data, size_t byteSize);
 	uint32_t addBuffer(const GPUBuffer &buffer);
-	uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds);
+	uint32_t importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds, std::vector<uint32_t> &lightIds);
 
 public:
 	bool initialize();

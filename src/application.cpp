@@ -172,9 +172,9 @@ bool Application::loadData()
 	mapCopyBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
 
 	// lights buffer
-	Light light1{ .position = glm::vec3(0, 5, 0), .color = glm::vec3(1, 1, 1), .intensity = 10.0f };
-	//uint32_t light1Id = 
-	//const size_t lightDataBytes = 
+	const size_t lightBuffSize = MaxLights * sizeof(Light);
+	GPUBuffer lightsBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, lightBuffSize, true, VMA_MEMORY_USAGE_AUTO);
+	m_lightBufferId = addBuffer(lightsBuffer);
 
 	return true;
 }
@@ -391,6 +391,7 @@ void Application::loadGltf(const std::string &filepath)
 	std::vector<uint32_t> textureIds = loadTextures(model, imageIds, samplerIds); // image/sampler combinations
 	std::vector<uint32_t> materialIds = loadMaterials(model, textureIds); // materials reference textureIds
 	std::vector<uint32_t> meshIds = loadMeshes(model, materialIds); // meshes/submeshes reference materials
+	std::vector<uint32_t> lightIds = loadLights(model);
 
 	// import scene nodes
 	const tg3_scene *scene = &model.scenes[model.default_scene != -1
@@ -399,7 +400,7 @@ void Application::loadGltf(const std::string &filepath)
 	// iterate over the scene's roots nodes, attach to existing root node (if present)
 	for (int i = 0; i < scene->nodes_count; ++i)
 	{
-		uint32_t nodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, m_lastRootNodeId, meshIds);
+		uint32_t nodeId = importNode(m_nodeWorld, model, scene->nodes[i], 0, m_lastRootNodeId, meshIds, lightIds);
 		if (!m_rootNodeId) // first root node
 		{
 			m_rootNodeId = nodeId;
@@ -410,11 +411,12 @@ void Application::loadGltf(const std::string &filepath)
 			m_lastRootNodeId = nodeId;
 		}
 	}
+
 	tg3_model_free(&model);
 	std::print("GLTF Loading Successful\n\n");
 }
 
-uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds)
+uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds, std::vector<uint32_t> &lightIds)
 {
 	const tg3_node &tg3Node = model.nodes[nodeIndex];
 
@@ -464,6 +466,10 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 		m_camera.yaw = atan2(-m_camera.forward.x, -m_camera.forward.z);
 		m_camera.pitch = asinf(m_camera.forward.y);
 	}
+	else if (tg3Node.light != -1)
+	{
+		node.lightId = lightIds[tg3Node.light];
+	}
 
 	if (prevSiblingId)
 	{
@@ -475,7 +481,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 	for (int i = 0; i < tg3Node.children_count; ++i)
 	{
 		int32_t childIndex = tg3Node.children[i];
-		lastChildId = importNode(nodeWorld, model, childIndex, nodeId, lastChildId, meshIds);
+		lastChildId = importNode(nodeWorld, model, childIndex, nodeId, lastChildId, meshIds, lightIds);
 
 		// set parent's first child id field
 		if (!node.firstChildId)
@@ -616,7 +622,7 @@ void Application::run()
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
-		Node& camNode = m_nodeWorld.getNode(m_cameraNodeId);
+		Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
 		camNode.setRotation(cameraQuat);
 
 		if (m_camera.type == CameraType::orbit)
@@ -1569,6 +1575,11 @@ void Application::render()
 				drawIndex++;
 			}
 		}
+		else if (node->lightId)
+		{
+			Light &light = m_lights[node->lightId - 1];
+			light.position = glm::vec4(node->getTranslation(), 1) * parentTransform;
+		}
 
 		// child nodes for processing
 		uint32_t childNodeId = node->firstChildId;
@@ -1678,13 +1689,18 @@ void Application::render()
 	FrameConstants frameConsts;
 	GPUBuffer &vertBuffer = m_buffers[m_vertexBufferId - 1];
 	GPUBuffer &materialBuffer = m_buffers[m_matBufferId - 1];
+	GPUBuffer &lightsBuffer = m_buffers[m_lightBufferId - 1];
 	frameConsts.vertexBufferAddress = vertBuffer.deviceAddress;
 	frameConsts.materialBufferAddress = materialBuffer.deviceAddress;
 	frameConsts.renderItemsAddress = res.renderItemBuffer.deviceAddress;
+	frameConsts.lightsBufferAddress = lightsBuffer.deviceAddress;
 	vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
 
 	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
 	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+	// update light buffer
+	mapCopyBufferData(lightsBuffer, 0, m_lights.data(), m_lights.size() * sizeof(Light));
 
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
@@ -2113,6 +2129,54 @@ std::vector<uint32_t> Application::loadMeshes(const tg3_model &model, const std:
 	return meshIds;
 }
 
+std::vector<uint32_t> Application::loadLights(const tg3_model &model)
+{
+	std::vector<uint32_t> lightIds;
+
+	// scene lights
+	for (int i = 0; i < model.ext.extensions_count; ++i)
+	{
+		const tg3_extension &ext = model.ext.extensions[i];
+		if (strcmp(ext.name.data, "KHR_lights_punctual") == 0)
+		{
+			const tg3_value &lightsObj = ext.value;
+			const tg3_value &lightsArray = lightsObj.object_data->value;
+			const int lightCount = lightsObj.object_data->value.array_count;
+			for (int li = 0; li < lightCount; ++li)
+			{
+				const tg3_value &tg3Light = lightsArray.array_data[li];
+				glm::vec3 color;
+				float intensity = 0;
+
+				// read light details
+				for (int oi = 0; oi < tg3Light.object_count; ++oi)
+				{
+					const tg3_kv_pair &pair = tg3Light.object_data[oi];
+					if (strcmp(pair.key.data, "color") == 0)
+					{
+						const tg3_value &colorVal = pair.value;
+						const tg3_value *colorArr = colorVal.array_data;
+						for (int ci = 0; ci < colorVal.array_count; ++ci)
+						{
+							color[ci] = colorArr[ci].type == TG3_VALUE_REAL ? colorArr[ci].real_val : colorArr[ci].int_val;
+						};
+					}
+					else if (strcmp(pair.key.data, "intensity") == 0)
+					{
+						intensity = pair.value.real_val;
+					}
+				}
+				m_lights.push_back(Light{
+					.color = color,
+					.intensity = intensity
+					});
+				lightIds.push_back(m_lights.size());
+			}
+		}
+	}
+	return lightIds;
+}
+
 bool Application::createDescriptorSets()
 {
 	std::array<VkDescriptorPoolSize, 1> poolSizes
@@ -2222,7 +2286,7 @@ void Application::updateProjectionMatrix()
 {
 	const float aspectRatio = m_width / static_cast<float>(m_height);
 	m_matProj = glm::perspectiveRH(m_camera.fovY, aspectRatio, m_camera.nearPlane, m_camera.farPlane);
-} 
+}
 
 void Application::updateViewMatrix()
 {

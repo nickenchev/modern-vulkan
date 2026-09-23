@@ -1,6 +1,9 @@
 #version 460
 
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(location = 0) in vec3 inFragW;
 layout(location = 1) in vec3 inColor;
@@ -10,37 +13,65 @@ layout(location = 4) in flat uint inTextureIndex;
 layout(location = 5) in flat vec4 inMaterialBaseColor;
 layout(location = 0) out vec4 fragColor;
 
+layout(push_constant, scalar) uniform FrameConstants
+{
+    uint64_t vertexBufferAddress;
+    uint64_t materialBufferAddress;
+    uint64_t renderItemBufferAddress;
+    uint64_t lightsBufferAddress;
+} frameConsts;
+
 layout(set = 0, binding = 0) uniform sampler2D textures[];
+
+struct Light
+{
+	vec3 position;
+	vec3 color;
+	float falloff;
+};
+
+layout(buffer_reference, scalar) readonly buffer LightsPtr
+{
+    Light lights[];
+};
 
 void main()
 {
     vec4 texColor = texture(textures[inTextureIndex], inUV);
     vec3 finalColor = inColor * texColor.rgb * inMaterialBaseColor.rgb;
     vec3 nNormal = normalize(inNormal);
+	vec3 litColor = vec3(0);
+
+	const int numPointLights = 3;
+    LightsPtr lightsBuff = LightsPtr(frameConsts.lightsBufferAddress);
 
 	// point lights
-	vec3 lightPos = vec3(-3.3, 2.5, 5);
-	vec3 lightCol = vec3(0.8, 0.4, 0.6);
-	float lightIntensity = 1;
-	float falloff = 7.0;
-	float falloffStart = falloff - 4;
-	vec3 L = lightPos - inFragW; // vector from fragment to light position
-	float lightDistance = length(L);
-	vec3 pointLight = vec3(0);
-	if (lightDistance < falloff)
+	for (int i = 0; i < numPointLights; ++i)
 	{
-		float inverseSquare = 1.0 / max(lightDistance * lightDistance, 0.0001);
-		float window = clamp(1.0 - pow(lightDistance / falloff, 4), 0, 1);
-		float attenuation = inverseSquare * window;
-		L = L / lightDistance;
-		float d = max(dot(nNormal, L), 0);
-		pointLight += finalColor * lightCol * lightIntensity * d * attenuation;
-		//pointLight += finalColor * lightCol * lightIntensity * d * attenuation;
+		Light light = lightsBuff.lights[i];
+		vec3 lightPos = light.position;
+		vec3 lightCol = light.color;
+		float falloff = 10;
+		float lightIntensity = 1;
+		
+		float falloffStart = falloff - 4;
+		vec3 L = lightPos - inFragW; // vector from fragment to light position
+		float lightDistance = length(L);
+		if (lightDistance < falloff)
+		{
+			float inverseSquare = 1.0 / max(lightDistance * lightDistance, 0.0001);
+			float window = clamp(1.0 - pow(lightDistance / falloff, 4), 0, 1);
+			float attenuation = inverseSquare * window;
+
+			L = L / lightDistance;
+			float d = max(dot(nNormal, L), 0);
+			litColor += finalColor * lightCol * lightIntensity * d * attenuation;
+		}
 	}
 
     // ambient light
-	vec3 ambient = vec3(0.01, 0.01, 0.01) * finalColor;
+	vec3 ambient = vec3(0.005, 0.005, 0.005) * finalColor;
 
-	vec3 litColor = pointLight + ambient;
+	litColor += ambient;
 	fragColor = vec4(litColor, texColor.a);
 }

@@ -15,10 +15,11 @@ class Node
 	bool m_dirty = true;
 
 public:
-	uint32_t meshId = 0;
 	uint32_t parentId = 0;
 	uint32_t nextSiblingId = 0;
 	uint32_t firstChildId = 0;
+	uint32_t meshId = 0;
+	uint32_t lightId = 0;
 
 	glm::vec3 getTranslation() const { return m_translation; }
 	void setTranslation(const glm::vec3 &translation)

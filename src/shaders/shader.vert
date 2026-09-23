@@ -9,6 +9,7 @@ layout(push_constant, scalar) uniform FrameConstants
     uint64_t vertexBufferAddress;
     uint64_t materialBufferAddress;
     uint64_t renderItemBufferAddress;
+    uint64_t lightsBufferAddress;
 } frameConsts;
 
 struct Vertex
