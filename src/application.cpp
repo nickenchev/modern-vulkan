@@ -1578,7 +1578,7 @@ void Application::render()
 		else if (node->lightId)
 		{
 			Light &light = m_lights[node->lightId - 1];
-			light.position = glm::vec4(node->getTranslation(), 1) * parentTransform;
+			light.position = matWorld * glm::vec4(0, 0, 0, 1);
 		}
 
 		// child nodes for processing
