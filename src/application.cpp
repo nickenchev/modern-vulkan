@@ -584,6 +584,7 @@ void Application::run()
 		uint64_t nowTime = SDL_GetTicks();
 		const float deltaTime = (nowTime - prevTime) / 1000.0f;
 		prevTime = nowTime;
+		glm::vec2 mouseRel{};
 
 		SDL_Event event{ 0 };
 		while (SDL_PollEvent(&event))
@@ -600,9 +601,8 @@ void Application::run()
 			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION)
 			{
-				m_camera.yaw += glm::radians(-event.motion.xrel * m_mouseSensitivity);
-				m_camera.pitch += glm::radians(-event.motion.yrel * m_mouseSensitivity);
-				m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
+				mouseRel.x += event.motion.xrel;
+				mouseRel.y += event.motion.yrel;
 			}
 			else if (event.type == SDL_EVENT_KEY_UP)
 			{
@@ -614,6 +614,10 @@ void Application::run()
 				{
 					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
 				}
+				else if (event.key.scancode == SDL_SCANCODE_F9)
+				{
+					m_useMouseAverage = !m_useMouseAverage;
+				}
 			}
 		}
 
@@ -621,6 +625,31 @@ void Application::run()
 		constexpr float speed = 3.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
+
+		// write curren't frames mouse delta into history
+		m_mouseDeltas[m_mouseDeltaIndex] = -mouseRel * m_mouseSensitivity;
+		m_mouseDeltaIndex = (m_mouseDeltaIndex + 1) % MaxMouseDeltas;
+
+		// get average delta and use that for yaw/pitch
+		glm::vec2 finalMouseRel{};
+		if (m_useMouseAverage)
+		{
+			for (auto &mouseDelta : m_mouseDeltas)
+			{
+				finalMouseRel += mouseDelta;
+			}
+			finalMouseRel /= MaxMouseDeltas;
+		}
+		else
+		{
+			finalMouseRel = -mouseRel * m_mouseSensitivity;
+		}
+
+		// update cam look angles
+		m_camera.yaw += glm::radians(finalMouseRel.x);
+		m_camera.pitch += glm::radians(finalMouseRel.y);
+		m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
+
 		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
 		Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
 		camNode.setRotation(cameraQuat);
@@ -2177,7 +2206,7 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 				m_lights.push_back(Light{
 					.color = color,
 					.intensity = intensity
-				});
+					});
 				lightIds.push_back(m_lights.size());
 			}
 		}

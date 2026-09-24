@@ -158,7 +158,11 @@ class Application
 	glm::mat4 m_viewProjMatrix;
 
 	// mouse related
+	bool m_useMouseAverage = true;
 	float m_mouseSensitivity = 0.3f;
+	constexpr static unsigned int MaxMouseDeltas = 5;
+	std::array<glm::vec2, MaxMouseDeltas> m_mouseDeltas = {};
+	uint32_t m_mouseDeltaIndex = 0;
 
 	// lights
 	std::vector<Light> m_lights;
