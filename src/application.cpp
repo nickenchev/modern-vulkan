@@ -2152,7 +2152,15 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 				for (int oi = 0; oi < tg3Light.object_count; ++oi)
 				{
 					const tg3_kv_pair &pair = tg3Light.object_data[oi];
-					if (strcmp(pair.key.data, "color") == 0)
+
+					if (strcmp(pair.key.data, "type") == 0)
+					{
+						if (strcmp(pair.value.string_val.data, "point") == 0)
+						{
+							m_numPointLights++;
+						}
+					}
+					else if (strcmp(pair.key.data, "color") == 0)
 					{
 						const tg3_value &colorVal = pair.value;
 						const tg3_value *colorArr = colorVal.array_data;
@@ -2169,7 +2177,7 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 				m_lights.push_back(Light{
 					.color = color,
 					.intensity = intensity
-					});
+				});
 				lightIds.push_back(m_lights.size());
 			}
 		}

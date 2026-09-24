@@ -27,7 +27,8 @@ struct Light
 {
 	vec3 position;
 	vec3 color;
-	float falloff;
+	float intensity;
+	float range;
 };
 
 layout(buffer_reference, scalar) readonly buffer LightsPtr
@@ -49,24 +50,17 @@ void main()
 	for (int i = 0; i < numPointLights; ++i)
 	{
 		Light light = lightsBuff.lights[i];
-		vec3 lightPos = light.position;
-		vec3 lightCol = light.color;
-		float falloff = 10;
-		float lightIntensity = 1;
-		
-		float falloffStart = falloff - 4;
-		vec3 L = lightPos - inFragW; // vector from fragment to light position
+		vec3 L = light.position - inFragW; // vector from fragment to light position
 		float lightDistance = length(L);
-		if (lightDistance < falloff)
-		{
-			float inverseSquare = 1.0 / max(lightDistance * lightDistance, 0.0001);
-			float window = clamp(1.0 - pow(lightDistance / falloff, 4), 0, 1);
-			float attenuation = inverseSquare * window;
 
-			L = L / lightDistance;
-			float d = max(dot(nNormal, L), 0);
-			litColor += finalColor * lightCol * lightIntensity * d * attenuation;
-		}
+		float inverseSquare = 1.0 / max(lightDistance * lightDistance, 0.0001);
+		float window = pow(clamp(1.0 - pow(lightDistance / light.range, 4), 0, 1), 2);
+		float attenuation = inverseSquare * window;
+
+		float radiantIntensity = light.intensity / 683.0;
+		L = L / lightDistance;
+		float d = max(dot(nNormal, L), 0);
+		litColor += finalColor * light.color * d * attenuation * radiantIntensity;
 	}
 
     // ambient light
