@@ -614,10 +614,6 @@ void Application::run()
 				{
 					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
 				}
-				else if (event.key.scancode == SDL_SCANCODE_F9)
-				{
-					m_useMouseAverage = !m_useMouseAverage;
-				}
 			}
 		}
 
@@ -625,29 +621,15 @@ void Application::run()
 		constexpr float speed = 3.0f;
 		constexpr float epsilon = 0.01f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
+		constexpr float tau = 0.02;
 
-		// write curren't frames mouse delta into history
-		m_mouseDeltas[m_mouseDeltaIndex] = -mouseRel * m_mouseSensitivity;
-		m_mouseDeltaIndex = (m_mouseDeltaIndex + 1) % MaxMouseDeltas;
-
-		// get average delta and use that for yaw/pitch
-		glm::vec2 finalMouseRel{};
-		if (m_useMouseAverage)
-		{
-			for (auto &mouseDelta : m_mouseDeltas)
-			{
-				finalMouseRel += mouseDelta;
-			}
-			finalMouseRel /= MaxMouseDeltas;
-		}
-		else
-		{
-			finalMouseRel = -mouseRel * m_mouseSensitivity;
-		}
+		mouseRel = -mouseRel * m_mouseSensitivity;
+		m_mouseAlpha = 1.0f - std::exp(-deltaTime / tau);
+		m_smoothedMouseRel = m_smoothedMouseRel + m_mouseAlpha * (mouseRel - m_smoothedMouseRel);
 
 		// update cam look angles
-		m_camera.yaw += glm::radians(finalMouseRel.x);
-		m_camera.pitch += glm::radians(finalMouseRel.y);
+		m_camera.yaw += glm::radians(m_smoothedMouseRel.x);
+		m_camera.pitch += glm::radians(m_smoothedMouseRel.y);
 		m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
 
 		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
