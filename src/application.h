@@ -166,6 +166,7 @@ class Application
 	std::vector<Light> m_lights;
 	uint32_t m_lightBufferId = 0;
 	uint32_t m_numPointLights = 0;
+	uint32_t m_numSpotLights = 0;
 
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();

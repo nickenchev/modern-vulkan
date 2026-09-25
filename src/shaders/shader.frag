@@ -25,10 +25,14 @@ layout(set = 0, binding = 0) uniform sampler2D textures[];
 
 struct Light
 {
+	uint type;
 	vec3 position;
 	vec3 color;
+	vec3 direction;
 	float intensity;
 	float range;
+	float innerConeAngle;
+	float outerConeAngle;
 };
 
 layout(buffer_reference, scalar) readonly buffer LightsPtr
@@ -60,7 +64,17 @@ void main()
 		float radiantIntensity = light.intensity / 683.0;
 		L = L / lightDistance;
 		float d = max(dot(nNormal, L), 0);
-		litColor += finalColor * light.color * d * attenuation * radiantIntensity;
+		float cone = 1;
+
+		if (light.type == 1)
+		{
+			float cosS = dot(-L, light.direction);
+			float cosU = cos(light.outerConeAngle);
+			float cosP = cos(light.innerConeAngle);
+			float t = clamp((cosS - cosU) / (cosP - cosU), 0, 1);
+			cone = t * t * (3 - 2 * t);
+		}
+		litColor += finalColor * light.color * d * attenuation * radiantIntensity * cone;
 	}
 
     // ambient light

@@ -1590,6 +1590,12 @@ void Application::render()
 		{
 			Light &light = m_lights[node->lightId - 1];
 			light.position = matWorld * glm::vec4(0, 0, 0, 1);
+
+			if (light.type == LightType::spot)
+			{
+				Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
+				light.direction = glm::mat4_cast(camNode.getRotation()) * glm::vec4(0, 0, -1, 0);
+			}
 		}
 
 		// child nodes for processing
@@ -2156,8 +2162,7 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 			for (int li = 0; li < lightCount; ++li)
 			{
 				const tg3_value &tg3Light = lightsArray.array_data[li];
-				glm::vec3 color;
-				float intensity = 0;
+				Light light;
 
 				// read light details
 				for (int oi = 0; oi < tg3Light.object_count; ++oi)
@@ -2169,6 +2174,12 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 						if (strcmp(pair.value.string_val.data, "point") == 0)
 						{
 							m_numPointLights++;
+							light.type = LightType::point;
+						}
+						else if (strcmp(pair.value.string_val.data, "spot") == 0)
+						{
+							m_numSpotLights++;
+							light.type = LightType::spot;
 						}
 					}
 					else if (strcmp(pair.key.data, "color") == 0)
@@ -2177,18 +2188,30 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 						const tg3_value *colorArr = colorVal.array_data;
 						for (int ci = 0; ci < colorVal.array_count; ++ci)
 						{
-							color[ci] = colorArr[ci].type == TG3_VALUE_REAL ? colorArr[ci].real_val : colorArr[ci].int_val;
+							light.color[ci] = colorArr[ci].type == TG3_VALUE_REAL ? colorArr[ci].real_val : colorArr[ci].int_val;
 						};
 					}
 					else if (strcmp(pair.key.data, "intensity") == 0)
 					{
-						intensity = pair.value.real_val;
+						light.intensity = pair.value.real_val;
+					}
+					else if (strcmp(pair.key.data, "spot") == 0)
+					{
+						for (int soi = 0; soi < pair.value.object_count; ++soi)
+						{
+							const tg3_kv_pair &spotObj = pair.value.object_data[soi];
+							if (strcmp(spotObj.key.data, "innerConeAngle") == 0)
+							{
+								light.innerConeAngle = spotObj.value.real_val;
+							}
+							else if (strcmp(spotObj.key.data, "outerConeAngle") == 0)
+							{
+								light.outerConeAngle = spotObj.value.real_val;
+							}
+						}
 					}
 				}
-				m_lights.push_back(Light{
-					.color = color,
-					.intensity = intensity
-					});
+				m_lights.push_back(light);
 				lightIds.push_back(m_lights.size());
 			}
 		}

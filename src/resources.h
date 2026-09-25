@@ -68,10 +68,16 @@ struct Texture
 	uint32_t samplerId = 0;
 };
 
+enum class LightType { point, spot };
+
 struct Light
 {
+	LightType type = LightType::point;
 	glm::vec3 position = glm::vec3(0.0f);
 	glm::vec3 color = glm::vec3(1.0f);
+	glm::vec3 direction = glm::vec3(0, 0, -1);
 	float intensity = 1.0f;
 	float range = 100.0f;
+	float innerConeAngle = 0;
+	float outerConeAngle = glm::quarter_pi<float>();
 };
