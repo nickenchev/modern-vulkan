@@ -171,11 +171,6 @@ bool Application::loadData()
 	m_matBufferId = addBuffer(matBuffer);
 	mapCopyBufferData(matBuffer, 0, m_materials.data(), matDataBytes);
 
-	// lights buffer
-	const size_t lightBuffSize = MaxLights * sizeof(Light);
-	GPUBuffer lightsBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, lightBuffSize, true, VMA_MEMORY_USAGE_AUTO);
-	m_lightBufferId = addBuffer(lightsBuffer);
-
 	return true;
 }
 
@@ -537,6 +532,9 @@ void Application::shutdown()
 		vmaUnmapMemory(m_vmaAllocator, res.renderItemBuffer.allocation);
 		vkDestroyBuffer(m_device, res.renderItemBuffer.vkBuffer, nullptr);
 		vmaFreeMemory(m_vmaAllocator, res.renderItemBuffer.allocation);
+
+		vkDestroyBuffer(m_device, res.lightsBuffer.vkBuffer, nullptr);
+		vmaFreeMemory(m_vmaAllocator, res.lightsBuffer.allocation);
 	}
 	// one-time use command buffer pool
 	vkDestroyCommandPool(m_device, m_commandPool, nullptr);
@@ -619,9 +617,9 @@ void Application::run()
 
 		// handle basic cam movement
 		constexpr float speed = 3.0f;
-		constexpr float epsilon = 0.01f;
+		constexpr float epsilon = 0.001f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
-		constexpr float tau = 0.02;
+		constexpr float tau = 0.030; // in seconds
 
 		mouseRel = -mouseRel * m_mouseSensitivity;
 		m_mouseAlpha = 1.0f - std::exp(-deltaTime / tau);
@@ -630,7 +628,7 @@ void Application::run()
 		// update cam look angles
 		m_camera.yaw += glm::radians(m_smoothedMouseRel.x);
 		m_camera.pitch += glm::radians(m_smoothedMouseRel.y);
-		m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + 0.01f, glm::half_pi<float>() - 0.01f);
+		m_camera.pitch = glm::clamp(m_camera.pitch, -glm::half_pi<float>() + epsilon, glm::half_pi<float>() - epsilon);
 
 		glm::quat cameraQuat = glm::quat(glm::vec3(m_camera.pitch, m_camera.yaw, 0.0f));
 		Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
@@ -779,6 +777,11 @@ bool Application::initializeVulkan()
 	{
 		showError("Couldn't create buffers for indirect-drawing");
 		return false;
+	}
+
+	if (!createResourceBuffers())
+	{
+		showError("Couldn't create resource buffers");
 	}
 
 	return true;
@@ -1593,8 +1596,7 @@ void Application::render()
 
 			if (light.type == LightType::spot)
 			{
-				Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
-				light.direction = glm::mat4_cast(camNode.getRotation()) * glm::vec4(0, 0, -1, 0);
+				light.direction = matWorld * glm::vec4(0, 0, -1, 0);
 			}
 		}
 
@@ -1706,18 +1708,17 @@ void Application::render()
 	FrameConstants frameConsts;
 	GPUBuffer &vertBuffer = m_buffers[m_vertexBufferId - 1];
 	GPUBuffer &materialBuffer = m_buffers[m_matBufferId - 1];
-	GPUBuffer &lightsBuffer = m_buffers[m_lightBufferId - 1];
 	frameConsts.vertexBufferAddress = vertBuffer.deviceAddress;
 	frameConsts.materialBufferAddress = materialBuffer.deviceAddress;
 	frameConsts.renderItemsAddress = res.renderItemBuffer.deviceAddress;
-	frameConsts.lightsBufferAddress = lightsBuffer.deviceAddress;
+	frameConsts.lightsBufferAddress = res.lightsBuffer.deviceAddress;
 	vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
 
 	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
 	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 	// update light buffer
-	mapCopyBufferData(lightsBuffer, 0, m_lights.data(), m_lights.size() * sizeof(Light));
+	mapCopyBufferData(res.lightsBuffer, 0, m_lights.data(), m_lights.size() * sizeof(Light));
 
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
@@ -2320,6 +2321,20 @@ bool Application::createIndirectDrawBuffers()
 			return false;
 		}
 		res.renderItemPtr = reinterpret_cast<RenderItem *>(riBuffPtr);
+	}
+	return true;
+}
+
+bool Application::createResourceBuffers()
+{
+	for (auto &res : m_frameResources)
+	{
+		const size_t lightBuffSize = MaxLights * sizeof(Light);
+		res.lightsBuffer = createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, lightBuffSize, true, VMA_MEMORY_USAGE_AUTO);
+		if (!res.lightsBuffer.vkBuffer)
+		{
+			return false;
+		}
 	}
 	return true;
 }

@@ -63,6 +63,7 @@ struct FrameResources
 	GPUBuffer renderItemBuffer;
 	VkDrawIndexedIndirectCommand *indirectDrawPtr = nullptr;
 	RenderItem *renderItemPtr = nullptr;
+	GPUBuffer lightsBuffer;
 };
 
 class Application
@@ -164,7 +165,6 @@ class Application
 
 	// lights
 	std::vector<Light> m_lights;
-	uint32_t m_lightBufferId = 0;
 	uint32_t m_numPointLights = 0;
 	uint32_t m_numSpotLights = 0;
 
@@ -185,6 +185,7 @@ class Application
 	bool createCommandBuffers();
 	bool createDescriptorSets();
 	bool createIndirectDrawBuffers();
+	bool createResourceBuffers();
 	void updateProjectionMatrix();
 	void updateViewMatrix();
 	void render();
