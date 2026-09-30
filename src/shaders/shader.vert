@@ -10,6 +10,8 @@ layout(push_constant, scalar) uniform FrameConstants
     uint64_t materialBufferAddress;
     uint64_t renderItemBufferAddress;
     uint64_t lightsBufferAddress;
+    vec3 camPosition;
+    vec3 camDirection;
 } frameConsts;
 
 struct Vertex
@@ -28,6 +30,7 @@ layout(buffer_reference, scalar) readonly buffer VertexPtr
 struct Material
 {
     vec4 baseColor;
+    float roughnessFactor;
     uint colorTextureIndex;
 };
 
@@ -55,6 +58,7 @@ layout (location = 2) out vec3 outNormal;
 layout (location = 3) out vec2 outUV;
 layout (location = 4) out flat uint outTextureIndex;
 layout (location = 5) out flat vec4 outMaterialBaseColor;
+layout (location = 6) out flat float outRoughness;
 
 void main()
 {
@@ -74,4 +78,5 @@ void main()
     outUV = v.uv;
     outTextureIndex = material.colorTextureIndex;
     outMaterialBaseColor = material.baseColor;
+    outRoughness = material.roughnessFactor;
 }

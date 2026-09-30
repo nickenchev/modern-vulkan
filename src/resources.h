@@ -59,7 +59,8 @@ struct Camera
 struct Material
 {
 	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
-	uint32_t textureIndex = 0;
+	float roughnessFactor = 1;
+	uint32_t baseColorTextureIndex = 0;
 };
 
 struct Texture
@@ -68,7 +69,7 @@ struct Texture
 	uint32_t samplerId = 0;
 };
 
-enum class LightType { point, spot };
+enum class LightType : uint32_t { point, spot };
 
 struct Light
 {

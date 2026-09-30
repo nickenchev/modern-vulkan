@@ -30,6 +30,10 @@ struct FrameConstants
 	uint64_t materialBufferAddress = 0;
 	uint64_t renderItemsAddress = 0;
 	uint64_t lightsBufferAddress = 0;
+	glm::vec3 camPosition;
+	glm::vec3 camDirection;
+	int numPointLights = 0;
+	int numSpotLights = 0;
 };
 
 struct GPUImage
@@ -165,6 +169,7 @@ class Application
 
 	// lights
 	std::vector<Light> m_lights;
+	std::vector<uint32_t> m_lightIndices;
 	uint32_t m_numPointLights = 0;
 	uint32_t m_numSpotLights = 0;
 

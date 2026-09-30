@@ -612,6 +612,24 @@ void Application::run()
 				{
 					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
 				}
+				else if (event.key.scancode == SDL_SCANCODE_F)
+				{
+					for (Light &light : m_lights)
+					{
+						if (light.type == LightType::spot)
+						{
+							static float flashIntensity = light.intensity;
+							if (light.intensity == 0)
+							{
+								light.intensity = flashIntensity;
+							}
+							else
+							{
+								light.intensity = 0;
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -1712,13 +1730,24 @@ void Application::render()
 	frameConsts.materialBufferAddress = materialBuffer.deviceAddress;
 	frameConsts.renderItemsAddress = res.renderItemBuffer.deviceAddress;
 	frameConsts.lightsBufferAddress = res.lightsBuffer.deviceAddress;
+	frameConsts.numPointLights = m_numPointLights;
+	frameConsts.numSpotLights = m_numSpotLights;
+
+	const Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
+	frameConsts.camPosition = camNode.getTranslation();
+	frameConsts.camDirection = m_camera.forward;
+
 	vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
 
 	GPUBuffer &idxBuffer = m_buffers[m_indexBufferId - 1];
 	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 	// update light buffer
-	mapCopyBufferData(res.lightsBuffer, 0, m_lights.data(), m_lights.size() * sizeof(Light));
+	std::vector<Light> gpuLights = m_lights;
+	std::sort(gpuLights.begin(), gpuLights.end(), [](const Light &l1, const Light &l2) {
+		return static_cast<uint32_t>(l1.type) < static_cast<uint32_t>(l2.type);
+	});
+	mapCopyBufferData(res.lightsBuffer, 0, gpuLights.data(), gpuLights.size() * sizeof(Light));
 
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
@@ -2029,9 +2058,9 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 					tg3mat->pbr_metallic_roughness.base_color_factor[1],
 					tg3mat->pbr_metallic_roughness.base_color_factor[2],
 					tg3mat->pbr_metallic_roughness.base_color_factor[3]),
-				.textureIndex = tg3mat->pbr_metallic_roughness.base_color_texture.index != -1
-					? textureIds[tg3mat->pbr_metallic_roughness.base_color_texture.index] - 1
-					: 0
+				.roughnessFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.roughness_factor),
+				.baseColorTextureIndex = tg3mat->pbr_metallic_roughness.base_color_texture.index != -1
+					? textureIds[tg3mat->pbr_metallic_roughness.base_color_texture.index] - 1 : 0,
 			});
 		materialIds[i] = m_materials.size();
 	}
@@ -2160,6 +2189,7 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 			const tg3_value &lightsObj = ext.value;
 			const tg3_value &lightsArray = lightsObj.object_data->value;
 			const int lightCount = lightsObj.object_data->value.array_count;
+			lightIds.reserve(lightCount);
 			for (int li = 0; li < lightCount; ++li)
 			{
 				const tg3_value &tg3Light = lightsArray.array_data[li];
@@ -2224,7 +2254,7 @@ bool Application::createDescriptorSets()
 {
 	std::array<VkDescriptorPoolSize, 1> poolSizes
 	{
-		VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures }
+		VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures }
 	};
 
 	VkDescriptorPoolCreateInfo poolInfo
