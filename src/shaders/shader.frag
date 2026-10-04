@@ -9,9 +9,10 @@ layout(location = 0) in vec3 inFragW;
 layout(location = 1) in vec3 inColor;
 layout(location = 2) in vec3 inNormal;
 layout(location = 3) in vec2 inUV;
-layout(location = 4) in flat uint inTextureIndex;
-layout(location = 5) in flat vec4 inMaterialBaseColor;
-layout(location = 6) in flat float inRoughness;
+layout (location = 4) in flat uint inColorTexIdx;
+layout (location = 5) in flat uint inRoughTexIdx;
+layout (location = 6) in flat vec4 inMaterialBaseColor;
+layout (location = 7) in flat float inRoughness;
 layout(location = 0) out vec4 fragColor;
 
 layout(push_constant, scalar) uniform FrameConstants
@@ -53,13 +54,25 @@ float attenuate(float lightDistance, float range)
 	return attenuation;
 }
 
+float specular(vec3 lightDir, vec3 viewDir, vec3 normal, float roughness, float matRoughness)
+{
+	vec3 halfwayDir = normalize(lightDir + viewDir);
+	float rough = clamp(roughness * matRoughness, 0.05, 1.0);
+	float a = rough * rough;
+	float specStr = clamp(2.0 / (a * a) - 2.0, 4, 4096);
+	float spec = pow(max(dot(normal, halfwayDir), 0.0), specStr) * (specStr + 8) / 8 * 0.04;
+	return spec;
+}
+
 void main()
 {
-    vec4 texColor = texture(textures[inTextureIndex], inUV);
+    vec4 texColor = texture(textures[inColorTexIdx], inUV);
+    vec4 ormColor = texture(textures[inRoughTexIdx], inUV);
     vec3 finalColor = inColor * texColor.rgb * inMaterialBaseColor.rgb;
     vec3 nNormal = normalize(inNormal);
 	vec3 nViewDir = normalize(frameConsts.camPosition - inFragW);
 	vec3 litColor = vec3(0);
+	float exposure = 0.7;
     LightsPtr lightsBuff = LightsPtr(frameConsts.lightsBufferAddress);
 
 	// point lights
@@ -69,7 +82,6 @@ void main()
 		Light light = lightsBuff.lights[lightIdx];
 		vec3 L = light.position - inFragW; // vector from fragment to light position
 		float lightDistance = length(L);
-
 		float attenuation = attenuate(lightDistance, light.range);
 
 		float radiantIntensity = light.intensity / 683.0;
@@ -77,12 +89,7 @@ void main()
 		float d = max(dot(nNormal, L), 0);
 		vec3 radiance = light.color * attenuation * radiantIntensity;
 		litColor += finalColor * radiance * d;
-
-		// specular highlight
-		vec3 rL = reflect(-L, nNormal);
-		float spec = pow(max(dot(nViewDir, rL), 0.0), 32);
-		float specularStr = 1.0 - inRoughness;
-		litColor += specularStr * spec * d * radiance;
+		litColor += specular(L, nViewDir, nNormal, ormColor.g, inRoughness) * d * radiance;
 	}
 
 	int spotStartIdx = lightIdx;
@@ -91,35 +98,28 @@ void main()
 		Light light = lightsBuff.lights[lightIdx];
 		vec3 L = light.position - inFragW; // vector from fragment to light position
 		float lightDistance = length(L);
-
 		float attenuation = attenuate(lightDistance, light.range);
 
 		float radiantIntensity = light.intensity / 683.0;
 		L = L / lightDistance;
 		float d = max(dot(nNormal, L), 0);
-		float cone = 1;
 
-		if (light.type == 1) // spotlight
-		{
-			float cosS = dot(-L, light.direction);
-			float cosU = cos(light.outerConeAngle);
-			float cosP = cos(light.innerConeAngle);
-			float t = clamp((cosS - cosU) / (cosP - cosU), 0, 1);
-			cone = t * t * (3 - 2 * t);
-		}
+		float cosS = dot(-L, light.direction);
+		float cosU = cos(light.outerConeAngle);
+		float cosP = cos(light.innerConeAngle);
+		float t = clamp((cosS - cosU) / (cosP - cosU), 0, 1);
+		float cone = t * t * (3 - 2 * t);
+
 		vec3 radiance = light.color * attenuation * radiantIntensity * cone;
 		litColor += finalColor * radiance * d;
-
-		// specular highlight
-		vec3 rL = reflect(-L, nNormal);
-		float spec = pow(max(dot(nViewDir, rL), 0.0), 32);
-		float specularStr = 1.0 - inRoughness;
-		litColor += specularStr * spec * d * radiance;
+		litColor += specular(L, nViewDir, nNormal, ormColor.g, inRoughness) * d * radiance;
 	}
 
     // ambient light
-	vec3 ambient = vec3(0.005, 0.005, 0.005) * finalColor;
+	vec3 ambient = vec3(0.01, 0.01, 0.01) * finalColor;
 
 	litColor += ambient;
-	fragColor = vec4(litColor, texColor.a);
+	vec3 c = litColor * exposure;
+	vec3 tonemapped = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
+	fragColor = vec4(tonemapped, texColor.a);
 }

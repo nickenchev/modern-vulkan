@@ -32,6 +32,8 @@ struct Material
     vec4 baseColor;
     float roughnessFactor;
     uint colorTextureIndex;
+    uint normalTextureIndex;
+    uint roughnessTextureIndex;
 };
 
 layout(buffer_reference, scalar) readonly buffer MaterialPtr
@@ -56,9 +58,10 @@ layout (location = 0) out vec3 outFragW;
 layout (location = 1) out vec3 outColor;
 layout (location = 2) out vec3 outNormal;
 layout (location = 3) out vec2 outUV;
-layout (location = 4) out flat uint outTextureIndex;
-layout (location = 5) out flat vec4 outMaterialBaseColor;
-layout (location = 6) out flat float outRoughness;
+layout (location = 4) out flat uint outColorTexIdx;
+layout (location = 5) out flat uint outRoughTexIdx;
+layout (location = 6) out flat vec4 outMaterialBaseColor;
+layout (location = 7) out flat float outRoughness;
 
 void main()
 {
@@ -76,7 +79,8 @@ void main()
     outColor = v.color;
     outNormal = mat3x3(transpose(inverse(ri.worldMatrix))) * v.normal; 
     outUV = v.uv;
-    outTextureIndex = material.colorTextureIndex;
+    outColorTexIdx = material.colorTextureIndex;
+    outRoughTexIdx = material.roughnessTextureIndex;
     outMaterialBaseColor = material.baseColor;
     outRoughness = material.roughnessFactor;
 }

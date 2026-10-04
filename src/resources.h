@@ -28,12 +28,19 @@ struct SubMesh
 	uint32_t materialId = 0;
 };
 
+enum class ImageUsage
+{
+	unknown, srgb, data
+};
+
 struct Image
 {
 	int width;
 	int height;
 	int channels;
+	ImageUsage usage = ImageUsage::unknown;
 	unsigned char *data;
+	uint32_t gpuImageId = 0;
 };
 
 
@@ -61,10 +68,13 @@ struct Material
 	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
 	float roughnessFactor = 1;
 	uint32_t baseColorTextureIndex = 0;
+	uint32_t normalTextureIndex = 0;
+	uint32_t roughnessTextureIndex = 0;
 };
 
 struct Texture
 {
+	std::string name;
 	uint32_t imageId = 0;
 	uint32_t samplerId = 0;
 };

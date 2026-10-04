@@ -173,6 +173,9 @@ class Application
 	uint32_t m_numPointLights = 0;
 	uint32_t m_numSpotLights = 0;
 
+	// gameplay related
+	uint32_t m_flashlightId = 0;
+
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();
 	bool createVulkanInstance();
@@ -199,16 +202,15 @@ class Application
 	void submitTransientCommandBuffer(VkCommandBuffer commandBuffer);
 
 	void loadGltf(const std::string &filepath);
-
+	void onNodeImported(const Node &node, uint32_t nodeId);
 	std::vector<Image> loadImages(const tg3_model &model, const std::filesystem::path &imageDir);
 	std::vector<uint32_t> loadSamplers(const tg3_model &model);
-	std::vector<uint32_t> loadTextures(const tg3_model &model, const std::vector<uint32_t> &imageIds, const std::vector<uint32_t> &samplerIds);
-	std::vector<uint32_t> loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds);
+	std::vector<uint32_t> loadMaterials(const tg3_model &model, const std::vector<uint32_t> &samplerIds, std::vector<Image> &images);
 	std::vector<uint32_t> loadMeshes(const tg3_model &model, const std::vector<uint32_t> &materialIds);
 	std::vector<uint32_t> loadLights(const tg3_model& model);
 
-	std::vector<uint32_t> uploadImages(const std::vector<Image> &images);
-	std::pair<uint32_t, GPUBuffer> createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels);
+	void uploadImages(const std::vector<Image> &images);
+	GPUBuffer createImage(VkCommandBuffer commandBuffer, const Image &image);
 	void updateTextureDescriptors() const;
 
 	GPUBuffer createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage);

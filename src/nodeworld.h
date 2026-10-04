@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -8,6 +9,7 @@
 
 class Node
 {
+	std::string m_name;
 	glm::vec3 m_translation = glm::vec3(0, 0, 0);
 	glm::vec3 m_scale = glm::vec3(1, 1, 1);
 	glm::quat m_rotation = glm::quat(1, 0, 0, 0);
@@ -20,6 +22,12 @@ public:
 	uint32_t firstChildId = 0;
 	uint32_t meshId = 0;
 	uint32_t lightId = 0;
+
+	const std::string &getName() const { return m_name; }
+	void setName(const std::string &name)
+	{
+		m_name = name;
+	}
 
 	glm::vec3 getTranslation() const { return m_translation; }
 	void setTranslation(const glm::vec3 &translation)

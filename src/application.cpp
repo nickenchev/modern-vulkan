@@ -53,17 +53,20 @@ bool Application::loadData()
 
 	// fallback 1x1 white texture base color texture (0-index in tex array)
 	uint32_t whitePixelData = 0xFFFFFFFF; // RGBA
+	m_images.push_back(GPUImage{});
 	Image whitePixel
 	{
 		.width = 1,
 		.height = 1,
 		.channels = 4,
+		.usage = ImageUsage::srgb,
 		.data = reinterpret_cast<unsigned char *>(&whitePixelData),
+		.gpuImageId = static_cast<uint32_t>(m_images.size())
 	};
 
 	VkCommandBuffer whiteImgCmdBuff = startTransientCommandBuffer();
-	auto [whiteImageId, whiteStagingBuffer] = createImage(whiteImgCmdBuff, whitePixel.data, whitePixel.width, whitePixel.height, 4);
-	m_whitePixelImageId = whiteImageId;
+	GPUBuffer whiteStagingBuffer = createImage(whiteImgCmdBuff, whitePixel);
+	m_whitePixelImageId = whitePixel.gpuImageId;
 	submitTransientCommandBuffer(whiteImgCmdBuff); // submit and wait
 	vmaDestroyBuffer(m_vmaAllocator, whiteStagingBuffer.vkBuffer, whiteStagingBuffer.allocation);
 
@@ -242,44 +245,20 @@ std::vector<uint32_t> Application::loadSamplers(const tg3_model &model)
 	return samplerIds;
 }
 
-std::vector<uint32_t> Application::loadTextures(const tg3_model &model, const std::vector<uint32_t> &imageIds, const std::vector<uint32_t> &samplerIds)
-{
-	assert(m_textures.size() + model.textures_count <= MaxTextures && "Exceeding max texture count");
-	std::vector<uint32_t> textureIds(model.textures_count);
-	for (int i = 0; i < model.textures_count; ++i)
-	{
-		const tg3_texture &tex = model.textures[i];
-		m_textures.push_back(
-			Texture
-			{
-				.imageId = imageIds[tex.source],
-				.samplerId = samplerIds[tex.sampler]
-			});
-		textureIds[i] = m_textures.size();
-	}
-	return textureIds;
-}
-
-std::vector<uint32_t> Application::uploadImages(const std::vector<Image> &images)
+void Application::uploadImages(const std::vector<Image> &images)
 {
 	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
 	std::vector<GPUBuffer> stagingBuffers;
 	stagingBuffers.reserve(images.size());
 
 	// upload images to GPU textures
-	std::vector<uint32_t> imageIds(images.size());
 	for (int i = 0; i < images.size(); ++i)
 	{
 		const Image &image = images[i];
 		if (image.data)
 		{
-			auto [imageId, stagingTexBuffer] = createImage(commandBuffer, image.data, image.width, image.height, 4);
-			imageIds[i] = imageId;
+			GPUBuffer stagingTexBuffer = createImage(commandBuffer, image);
 			stagingBuffers.push_back(stagingTexBuffer);
-		}
-		else
-		{
-			imageIds[i] = m_whitePixelImageId; // fallback to white pixel texture
 		}
 	}
 
@@ -290,7 +269,6 @@ std::vector<uint32_t> Application::uploadImages(const std::vector<Image> &images
 	{
 		vmaDestroyBuffer(m_vmaAllocator, stageBuff.vkBuffer, stageBuff.allocation);
 	}
-	return imageIds;
 }
 
 VkCommandBuffer Application::startTransientCommandBuffer()
@@ -373,18 +351,22 @@ void Application::loadGltf(const std::string &filepath)
 	}
 	tg3_error_stack_free(&errors);
 
+	// load image data into RAM
 	std::filesystem::path imageDir = std::filesystem::path(filepath).parent_path();
 	std::vector<Image> images = loadImages(model, imageDir); // load images into RAM
-	std::vector<uint32_t> imageIds = uploadImages(images); // upload images to VRAM
+
+	// load materials and detect image usage type
+	std::vector<uint32_t> samplerIds = loadSamplers(model); // samplers required for shaders
+	std::vector<uint32_t> materialIds = loadMaterials(model, samplerIds, images);
+
+	// create images and upload to GPU
+	uploadImages(images); // upload images to VRAM
+
 	// free image memory after uploading to VRAM
 	for (const Image &image : images)
 	{
 		stbi_image_free(image.data);
 	}
-
-	std::vector<uint32_t> samplerIds = loadSamplers(model); // samplers required for shaders
-	std::vector<uint32_t> textureIds = loadTextures(model, imageIds, samplerIds); // image/sampler combinations
-	std::vector<uint32_t> materialIds = loadMaterials(model, textureIds); // materials reference textureIds
 	std::vector<uint32_t> meshIds = loadMeshes(model, materialIds); // meshes/submeshes reference materials
 	std::vector<uint32_t> lightIds = loadLights(model);
 
@@ -411,11 +393,20 @@ void Application::loadGltf(const std::string &filepath)
 	std::print("GLTF Loading Successful\n\n");
 }
 
+void Application::onNodeImported(const Node &node, uint32_t nodeId)
+{
+	if (node.getName() == "Flashlight")
+	{
+		m_flashlightId = nodeId;
+	}
+}
+
 uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds, std::vector<uint32_t> &lightIds)
 {
 	const tg3_node &tg3Node = model.nodes[nodeIndex];
 
 	auto [node, nodeId] = nodeWorld.createNode();
+	node.setName(tg3Node.name.data);
 	node.parentId = parentId;
 
 	// retrieve the node's local transform
@@ -484,6 +475,7 @@ uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, i
 			node.firstChildId = lastChildId;
 		}
 	}
+	onNodeImported(node, nodeId);
 
 	return nodeId;
 }
@@ -614,19 +606,21 @@ void Application::run()
 				}
 				else if (event.key.scancode == SDL_SCANCODE_F)
 				{
-					for (Light &light : m_lights)
+					// get flashlight node and it's associated Light object
+					const Node &flashlightNode = m_nodeWorld.getNode(m_flashlightId);
+					Light &light = m_lights[flashlightNode.lightId - 1];
+					static float flashIntensity = light.intensity; // evaluated once
+
+					// toggle light on/off via intensity
+					if (light.type == LightType::spot)
 					{
-						if (light.type == LightType::spot)
+						if (light.intensity == 0)
 						{
-							static float flashIntensity = light.intensity;
-							if (light.intensity == 0)
-							{
-								light.intensity = flashIntensity;
-							}
-							else
-							{
-								light.intensity = 0;
-							}
+							light.intensity = flashIntensity;
+						}
+						else
+						{
+							light.intensity = 0;
 						}
 					}
 				}
@@ -634,7 +628,7 @@ void Application::run()
 		}
 
 		// handle basic cam movement
-		constexpr float speed = 3.0f;
+		constexpr float speed = 2.0f;
 		constexpr float epsilon = 0.001f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 		constexpr float tau = 0.030; // in seconds
@@ -1746,7 +1740,7 @@ void Application::render()
 	std::vector<Light> gpuLights = m_lights;
 	std::sort(gpuLights.begin(), gpuLights.end(), [](const Light &l1, const Light &l2) {
 		return static_cast<uint32_t>(l1.type) < static_cast<uint32_t>(l2.type);
-	});
+		});
 	mapCopyBufferData(res.lightsBuffer, 0, gpuLights.data(), gpuLights.size() * sizeof(Light));
 
 	// begin dynamic rendering
@@ -1860,16 +1854,18 @@ void Application::render()
 	vkQueuePresentKHR(m_gfxQueue, &presentInfo);
 }
 
-std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandBuffer, unsigned char *imageData, uint32_t width, uint32_t height, int channels)
+GPUBuffer Application::createImage(VkCommandBuffer commandBuffer, const Image &image)
 {
 	// create vk image and allocation
-	VkFormat imageFormat = VK_FORMAT_R8G8B8A8_SRGB;
+	assert(image.usage != ImageUsage::unknown && "Unknown image usage specified");
+	VkFormat imageFormat = image.usage == ImageUsage::srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+
 	VkImageCreateInfo imageInfo
 	{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 		.imageType = VK_IMAGE_TYPE_2D,
 		.format = imageFormat,
-		.extent {.width = width, .height = height, .depth = 1},
+		.extent {.width = static_cast<uint32_t>(image.width), .height = static_cast<uint32_t>(image.height), .depth = 1},
 		.mipLevels = 1,
 		.arrayLayers = 1,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -1877,12 +1873,13 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
 	};
+
+	GPUImage &gpuImage = m_images[image.gpuImageId - 1];
 	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
-	GPUImage gpuImage;
 	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &gpuImage.image, &gpuImage.allocation, nullptr) != VK_SUCCESS)
 	{
 		showError("Error creating image");
-		return { 0, GPUBuffer{} };
+		return GPUBuffer{};
 	}
 
 	VkImageViewCreateInfo imgViewInfo
@@ -1901,7 +1898,7 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 	if (vkCreateImageView(m_device, &imgViewInfo, nullptr, &gpuImage.imageView) != VK_SUCCESS)
 	{
 		showError("Error creating image view");
-		return { 0, GPUBuffer{} };
+		return GPUBuffer{};
 	}
 
 	// transition the image to transfer-DST
@@ -1933,14 +1930,14 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 	vkCmdPipelineBarrier2(commandBuffer, &transferDepInfo);
 
 	// create staging buffer and issue record copy operation
-	const size_t byteSize = width * height * channels;
+	const size_t byteSize = image.width * image.height * 4;
 	GPUBuffer stageBuff = createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, byteSize, true, VMA_MEMORY_USAGE_AUTO_PREFER_HOST);
-	mapCopyBufferData(stageBuff, 0, imageData, byteSize);
+	mapCopyBufferData(stageBuff, 0, image.data, byteSize);
 
 	VkBufferImageCopy buffImgCopy
 	{
 		.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-		.imageExtent = {.width = width, .height = height, .depth = 1 },
+		.imageExtent = {.width = static_cast<uint32_t>(image.width), .height = static_cast<uint32_t>(image.height), .depth = 1 },
 	};
 	vkCmdCopyBufferToImage(commandBuffer, stageBuff.vkBuffer, gpuImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buffImgCopy);
 
@@ -1972,55 +1969,7 @@ std::pair<uint32_t, GPUBuffer> Application::createImage(VkCommandBuffer commandB
 	};
 	vkCmdPipelineBarrier2(commandBuffer, &shaderReadDepInfo);
 
-	m_images.push_back(gpuImage);
-	const uint32_t imageId = m_images.size();
-	return { imageId, stageBuff };
-	/*
-	// need different image usage for host to gpu copy
-	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_CPU_TO_GPU };
-	GPUImage gpuImage;
-	if (vmaCreateImage(m_vmaAllocator, &imageInfo, &allocInfo, &gpuImage.image, &gpuImage.allocation, nullptr) != VK_SUCCESS)
-	{
-		showError("Error creating image");
-		return { 0, GPUBuffer{} };
-	}
-
-	// ensure the image is in shader-read-optimal layout
-	VkHostImageLayoutTransitionInfo transition
-	{
-		.sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO,
-		.image = texture.image,
-		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 }
-	};
-	if (!vkTransitionImageLayout(m_device, 1, &transition))
-	{
-		showError("Error transitioning GPU image");
-		return 0;
-	}
-	// copy the image data
-	VkMemoryToImageCopy memCopy
-	{
-		.sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY,
-		.pHostPointer = imageData,
-		.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-		.imageExtent = { .width = width, .height = height, .depth = 1 },
-	};
-	VkCopyMemoryToImageInfo copyInfo
-	{
-		.sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY,
-		.dstImage = texture.image,
-		.dstImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		.regionCount = 1,
-		.pRegions = &memCopy
-	};
-	if (vkCopyMemoryToImage(m_device, &copyInfo) != VK_SUCCESS)
-	{
-		showError("Error copying image data");
-		return 0;
-	}
-	*/
+	return stageBuff;
 }
 
 void Application::updateTextureDescriptors() const
@@ -2045,23 +1994,61 @@ void Application::updateTextureDescriptors() const
 	vkUpdateDescriptorSets(m_device, 1, &descSetWrite, 0, nullptr);
 }
 
-std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const std::vector<uint32_t> &textureIds)
+std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const std::vector<uint32_t> &samplerIds, std::vector<Image> &images)
 {
+	assert(m_textures.size() + model.textures_count <= MaxTextures && "Exceeding max texture count");
+
 	std::vector<uint32_t> materialIds(model.materials_count);
+
 	for (int i = 0; i < model.materials_count; ++i)
 	{
 		const tg3_material *tg3mat = &model.materials[i];
-		m_materials.push_back(Material
-			{
-				.baseColor = glm::vec4(
-					tg3mat->pbr_metallic_roughness.base_color_factor[0],
-					tg3mat->pbr_metallic_roughness.base_color_factor[1],
-					tg3mat->pbr_metallic_roughness.base_color_factor[2],
-					tg3mat->pbr_metallic_roughness.base_color_factor[3]),
-				.roughnessFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.roughness_factor),
-				.baseColorTextureIndex = tg3mat->pbr_metallic_roughness.base_color_texture.index != -1
-					? textureIds[tg3mat->pbr_metallic_roughness.base_color_texture.index] - 1 : 0,
-			});
+
+		Material mat;
+		// basic fields
+		mat.baseColor = glm::vec4(
+			tg3mat->pbr_metallic_roughness.base_color_factor[0],
+			tg3mat->pbr_metallic_roughness.base_color_factor[1],
+			tg3mat->pbr_metallic_roughness.base_color_factor[2],
+			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
+		mat.roughnessFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.roughness_factor);
+
+		const auto processTexture = [this, &images, &samplerIds](const tg3_texture &tex, ImageUsage imageUsage) {
+			// set appropriate image usage and pre-create GPUImage ID
+			Image &img = images[tex.source];
+			assert((img.usage == ImageUsage::unknown || img.usage == imageUsage) && "Dual image usage is unsupported");
+			img.usage = imageUsage;
+			m_images.push_back(GPUImage{});
+			img.gpuImageId = m_images.size();
+
+			// create texture GPUImage/Sampler combo
+			m_textures.push_back(Texture{
+					.name = tex.name.data != nullptr ? tex.name.data : "",
+					.imageId = img.gpuImageId,
+					.samplerId = samplerIds[tex.sampler]
+				});
+			uint32_t textureIndex = m_textures.size() - 1;
+			return textureIndex;
+		};
+
+		// texture maps and image usage detection
+		if (tg3mat->pbr_metallic_roughness.base_color_texture.index != -1)
+		{
+			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.base_color_texture.index];
+			mat.baseColorTextureIndex = processTexture(tex, ImageUsage::srgb);
+		}
+		if (tg3mat->normal_texture.index != -1)
+		{
+			const tg3_texture &tex = model.textures[tg3mat->normal_texture.index];
+			mat.normalTextureIndex = processTexture(tex, ImageUsage::data);
+		}
+		if (tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index != -1)
+		{
+			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index];
+			mat.roughnessTextureIndex = processTexture(tex, ImageUsage::data);
+		}
+
+		m_materials.push_back(mat);
 		materialIds[i] = m_materials.size();
 	}
 	return materialIds;
@@ -2254,7 +2241,7 @@ bool Application::createDescriptorSets()
 {
 	std::array<VkDescriptorPoolSize, 1> poolSizes
 	{
-		VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures }
+		VkDescriptorPoolSize {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MaxTextures }
 	};
 
 	VkDescriptorPoolCreateInfo poolInfo
