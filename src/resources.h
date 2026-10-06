@@ -79,7 +79,7 @@ struct Texture
 	uint32_t samplerId = 0;
 };
 
-enum class LightType : uint32_t { point, spot };
+enum class LightType : uint32_t { directional, point, spot };
 
 struct Light
 {

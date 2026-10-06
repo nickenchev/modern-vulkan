@@ -102,7 +102,8 @@ bool Application::loadData()
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
-	loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
+	//loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
+	loadGltf("assets/modular-demo/tiled_demo.gltf"); // Check your CWD
 
 	// scale root node
 	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
@@ -1606,7 +1607,7 @@ void Application::render()
 			Light &light = m_lights[node->lightId - 1];
 			light.position = matWorld * glm::vec4(0, 0, 0, 1);
 
-			if (light.type == LightType::spot)
+			if (light.type == LightType::spot || light.type == LightType::directional)
 			{
 				light.direction = matWorld * glm::vec4(0, 0, -1, 0);
 			}
@@ -1724,6 +1725,7 @@ void Application::render()
 	frameConsts.materialBufferAddress = materialBuffer.deviceAddress;
 	frameConsts.renderItemsAddress = res.renderItemBuffer.deviceAddress;
 	frameConsts.lightsBufferAddress = res.lightsBuffer.deviceAddress;
+	frameConsts.numDirLights = m_numDirLights;
 	frameConsts.numPointLights = m_numPointLights;
 	frameConsts.numSpotLights = m_numSpotLights;
 
@@ -1740,7 +1742,7 @@ void Application::render()
 	std::vector<Light> gpuLights = m_lights;
 	std::sort(gpuLights.begin(), gpuLights.end(), [](const Light &l1, const Light &l2) {
 		return static_cast<uint32_t>(l1.type) < static_cast<uint32_t>(l2.type);
-		});
+	});
 	mapCopyBufferData(res.lightsBuffer, 0, gpuLights.data(), gpuLights.size() * sizeof(Light));
 
 	// begin dynamic rendering
@@ -2187,9 +2189,15 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 				{
 					const tg3_kv_pair &pair = tg3Light.object_data[oi];
 
+					// check light type and track accordingly
 					if (strcmp(pair.key.data, "type") == 0)
 					{
-						if (strcmp(pair.value.string_val.data, "point") == 0)
+						if (strcmp(pair.value.string_val.data, "directional") == 0)
+						{
+							m_numDirLights++;
+							light.type = LightType::directional;
+						}
+						else if (strcmp(pair.value.string_val.data, "point") == 0)
 						{
 							m_numPointLights++;
 							light.type = LightType::point;
