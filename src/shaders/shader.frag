@@ -9,10 +9,7 @@ layout(location = 0) in vec3 inFragW;
 layout(location = 1) in vec3 inColor;
 layout(location = 2) in vec3 inNormal;
 layout(location = 3) in vec2 inUV;
-layout (location = 4) in flat uint inColorTexIdx;
-layout (location = 5) in flat uint inRoughTexIdx;
-layout (location = 6) in flat vec4 inMaterialBaseColor;
-layout (location = 7) in flat float inRoughness;
+layout (location = 4) in flat uint inMaterialIndex;
 layout(location = 0) out vec4 fragColor;
 
 layout(push_constant, scalar) uniform FrameConstants
@@ -29,6 +26,21 @@ layout(push_constant, scalar) uniform FrameConstants
 } frameConsts;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
+
+struct Material
+{
+    vec4 baseColor;
+    float roughnessFactor;
+    uint colorTextureIndex;
+    uint normalTextureIndex;
+    uint roughnessTextureIndex;
+};
+
+layout(buffer_reference, scalar) readonly buffer MaterialPtr
+{
+    Material materials[];
+};
+
 
 struct Light
 {
@@ -105,16 +117,18 @@ vec3 pbrNeutralToneMapping(vec3 color)
 
 void main()
 {
-    vec4 texColor = texture(textures[inColorTexIdx], inUV);
-    vec4 ormColor = texture(textures[inRoughTexIdx], inUV);
+    MaterialPtr matBuff = MaterialPtr(frameConsts.materialBufferAddress);
+    Material material = matBuff.materials[inMaterialIndex];
+    vec4 texColor = texture(textures[material.colorTextureIndex], inUV);
+    vec4 ormColor = texture(textures[material.roughnessTextureIndex], inUV);
 	float exposure = 0.8;
 	vec3 litColor = vec3(0);
 
 	ShadeInfo shadeInfo;
-	shadeInfo.surfaceColor = inColor * texColor.rgb * inMaterialBaseColor.rgb;
+	shadeInfo.surfaceColor = inColor * texColor.rgb * material.baseColor.rgb;
 	shadeInfo.normal = normalize(inNormal);
 	shadeInfo.viewDir = normalize(frameConsts.camPosition - inFragW);
-	shadeInfo.roughness = clamp(ormColor.g * inRoughness, 0.01, 1.0);
+	shadeInfo.roughness = clamp(ormColor.g * material.roughnessFactor, 0.01, 1.0);
 
     LightsPtr lightsBuff = LightsPtr(frameConsts.lightsBufferAddress);
 
@@ -160,7 +174,7 @@ void main()
 	lightIdx += frameConsts.numSpotLights;
 
     // ambient light
-	vec3 ambient = vec3(0.01, 0.01, 0.01) * shadeInfo.surfaceColor;
+	vec3 ambient = vec3(0.02, 0.02, 0.02) * shadeInfo.surfaceColor;
 	litColor += ambient;
 
 	// tone mapping

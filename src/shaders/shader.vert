@@ -27,20 +27,6 @@ layout(buffer_reference, scalar) readonly buffer VertexPtr
     Vertex vertices[];
 };
 
-struct Material
-{
-    vec4 baseColor;
-    float roughnessFactor;
-    uint colorTextureIndex;
-    uint normalTextureIndex;
-    uint roughnessTextureIndex;
-};
-
-layout(buffer_reference, scalar) readonly buffer MaterialPtr
-{
-    Material materials[];
-};
-
 struct RenderItem
 {
     mat4x4 wvp;
@@ -53,15 +39,11 @@ layout(buffer_reference, scalar) readonly buffer RenderItemPtr
     RenderItem renderItems[];
 };
 
-
 layout (location = 0) out vec3 outFragW;
 layout (location = 1) out vec3 outColor;
 layout (location = 2) out vec3 outNormal;
 layout (location = 3) out vec2 outUV;
-layout (location = 4) out flat uint outColorTexIdx;
-layout (location = 5) out flat uint outRoughTexIdx;
-layout (location = 6) out flat vec4 outMaterialBaseColor;
-layout (location = 7) out flat float outRoughness;
+layout (location = 4) out flat uint outMaterialIndex;
 
 void main()
 {
@@ -70,17 +52,11 @@ void main()
 
     RenderItemPtr riBuffer = RenderItemPtr(frameConsts.renderItemBufferAddress);
     RenderItem ri = riBuffer.renderItems[gl_InstanceIndex];
-
-    MaterialPtr matBuff = MaterialPtr(frameConsts.materialBufferAddress);
-    Material material = matBuff.materials[ri.materialIndex];
+    outMaterialIndex = ri.materialIndex;
 
     gl_Position = ri.wvp * vec4(v.position, 1.0);
     outFragW = (ri.worldMatrix * vec4(v.position, 1.0)).xyz;
     outColor = v.color;
     outNormal = mat3x3(transpose(inverse(ri.worldMatrix))) * v.normal; 
     outUV = v.uv;
-    outColorTexIdx = material.colorTextureIndex;
-    outRoughTexIdx = material.roughnessTextureIndex;
-    outMaterialBaseColor = material.baseColor;
-    outRoughness = material.roughnessFactor;
 }
