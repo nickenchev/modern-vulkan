@@ -164,7 +164,7 @@ class Application
 	glm::mat4 m_viewProjMatrix;
 
 	// mouse related
-	float m_mouseSensitivity = 0.3f;
+	float m_mouseSensitivity = 0.2f;
 	float m_mouseAlpha = 0.2f;
 	glm::vec2 m_smoothedMouseRel = {};
 
@@ -205,12 +205,13 @@ class Application
 
 	void loadGltf(const std::string &filepath);
 	void onNodeImported(const Node &node, uint32_t nodeId);
-	std::vector<Image> loadImages(const tg3_model &model, const std::filesystem::path &imageDir);
+	void loadImages(const tg3_model &model, std::vector<Image> &images, const std::filesystem::path &imageDir);
 	std::vector<uint32_t> loadSamplers(const tg3_model &model);
 	std::vector<uint32_t> loadMaterials(const tg3_model &model, const std::vector<uint32_t> &samplerIds, std::vector<Image> &images);
 	std::vector<uint32_t> loadMeshes(const tg3_model &model, const std::vector<uint32_t> &materialIds);
 	std::vector<uint32_t> loadLights(const tg3_model& model);
 
+	uint32_t nextGPUImage();
 	void uploadImages(const std::vector<Image> &images);
 	GPUBuffer createImage(VkCommandBuffer commandBuffer, const Image &image);
 	void updateTextureDescriptors() const;

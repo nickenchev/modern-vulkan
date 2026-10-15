@@ -35,12 +35,13 @@ enum class ImageUsage
 
 struct Image
 {
-	int width;
-	int height;
-	int channels;
+	int width = 0;
+	int height = 0;
+	int channels = 0;
 	ImageUsage usage = ImageUsage::unknown;
-	unsigned char *data;
+	unsigned char *data = nullptr;
 	uint32_t gpuImageId = 0;
+	std::string sourcePath;
 };
 
 
@@ -52,7 +53,7 @@ enum class CameraType
 struct Camera
 {
 	CameraType type = CameraType::firstPerson;
-	float fovY = 65.0f;
+	float fovY = 70.0f;
 	float nearPlane = 0.01f;
 	float farPlane = 1000.0f;
 	glm::vec3 forward = glm::vec3(0, 0, -1);
@@ -67,9 +68,12 @@ struct Material
 {
 	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
 	float roughnessFactor = 1;
+	float metallicFactor = 1;
+	glm::vec3 emissiveFactor = glm::vec3(1, 1, 1);
 	uint32_t baseColorTextureIndex = 0;
 	uint32_t normalTextureIndex = 0;
-	uint32_t roughnessTextureIndex = 0;
+	uint32_t ormTextureIndex = 0;
+	uint32_t emissiveTextureIndex = 0;
 };
 
 struct Texture

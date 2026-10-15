@@ -31,7 +31,7 @@ bool Application::initialize()
 	SDL_SetWindowRelativeMouseMode(m_window, true);
 
 	// setup renderer specifits here
-	m_nodeWorld.initialize(1024); // maximum node-world size
+	m_nodeWorld.initialize(4096); // maximum node-world size
 	m_nodeRenderStack.reserve(128); // render-stack per-frame size
 
 	if (!initializeVulkan())
@@ -44,8 +44,8 @@ bool Application::initialize()
 bool Application::loadData()
 {
 	// preallocate mem for vertex and index data
-	constexpr size_t vertexBufferBytes = 64 * 1024 * 1024; // 64MB vertex budget
-	constexpr size_t indexBufferBytes = 32 * 1024 * 1024; // 32MB index budget
+	constexpr size_t vertexBufferBytes = 256 * 1024 * 1024;
+	constexpr size_t indexBufferBytes = 256 * 1024 * 1024;
 	constexpr size_t totalVerts = vertexBufferBytes / sizeof(Vertex);
 	constexpr size_t totalIndices = indexBufferBytes / sizeof(uint32_t);
 	m_vertices.resize(totalVerts);
@@ -53,7 +53,6 @@ bool Application::loadData()
 
 	// fallback 1x1 white texture base color texture (0-index in tex array)
 	uint32_t whitePixelData = 0xFFFFFFFF; // RGBA
-	m_images.push_back(GPUImage{});
 	Image whitePixel
 	{
 		.width = 1,
@@ -61,7 +60,8 @@ bool Application::loadData()
 		.channels = 4,
 		.usage = ImageUsage::srgb,
 		.data = reinterpret_cast<unsigned char *>(&whitePixelData),
-		.gpuImageId = static_cast<uint32_t>(m_images.size())
+		.gpuImageId = nextGPUImage(),
+		.sourcePath = "Fallback Image"
 	};
 
 	VkCommandBuffer whiteImgCmdBuff = startTransientCommandBuffer();
@@ -97,13 +97,15 @@ bool Application::loadData()
 		.samplerId = whiteSamplerId
 		});
 
-	//loadGltf("D:\\glTF-Sample-Models\\2.0\\DamagedHelmet\\glTF\\DamagedHelmet.gltf");
 	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
 	//loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
-	loadGltf("assets/modular-demo/tiled_demo.gltf"); // Check your CWD
+	//loadGltf("assets/modular-demo/specular_demo.gltf"); // Check your CWD
+	//loadGltf("assets/modular-demo/helmet.gltf"); // Check your CWD
+	//loadGltf("D:\\gltf Models\\bistro_interior\\bistro_interior.gltf");
+	loadGltf("D:\\gltf Models\\bistro_exterior\\Untitled.gltf");
 
 	// scale root node
 	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
@@ -114,7 +116,7 @@ bool Application::loadData()
 	{
 		auto [camNode, camNodeId] = m_nodeWorld.createNode();
 		m_cameraNodeId = camNodeId;
-		camNode.setTranslation(glm::vec3(0, 1, 0));
+		camNode.setTranslation(glm::vec3(0, 0, 0));
 	}
 	assert(m_cameraNodeId && "Camera node must be initialized");
 
@@ -178,21 +180,27 @@ bool Application::loadData()
 	return true;
 }
 
-std::vector<Image> Application::loadImages(const tg3_model &model, const std::filesystem::path &imageDir)
+void Application::loadImages(const tg3_model &model, std::vector<Image> &images, const std::filesystem::path &imageDir)
 {
-	std::vector<Image> images(model.images_count);
 	for (int i = 0; i < model.images_count; ++i)
 	{
 		Image &img = images[i];
-		std::filesystem::path imagePath = imageDir / model.images[i].uri.data;
-		std::print("Loading image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
-		img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
-		if (!img.data)
+		if (img.usage != ImageUsage::unknown)
 		{
-			showError("Failed to load image: " + imagePath.string());
+			std::filesystem::path imagePath = imageDir / model.images[i].uri.data;
+			std::print("Loading image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
+			img.data = stbi_load(imagePath.string().c_str(), &img.width, &img.height, &img.channels, 4);
+			img.sourcePath = imagePath.string();
+			if (!img.data)
+			{
+				showError("Failed to load image: " + imagePath.string());
+			}
+		}
+		else
+		{
+			std::print("Skipping image {}/{}: {}\n", i + 1, model.images_count, model.images[i].uri.data);
 		}
 	}
-	return images;
 }
 
 std::vector<uint32_t> Application::loadSamplers(const tg3_model &model)
@@ -246,6 +254,12 @@ std::vector<uint32_t> Application::loadSamplers(const tg3_model &model)
 	return samplerIds;
 }
 
+uint32_t Application::nextGPUImage()
+{
+	m_images.push_back(GPUImage{});
+	return static_cast<uint32_t>(m_images.size());
+}
+
 void Application::uploadImages(const std::vector<Image> &images)
 {
 	VkCommandBuffer commandBuffer = startTransientCommandBuffer();
@@ -253,10 +267,9 @@ void Application::uploadImages(const std::vector<Image> &images)
 	stagingBuffers.reserve(images.size());
 
 	// upload images to GPU textures
-	for (int i = 0; i < images.size(); ++i)
+	for (const Image &image : images)
 	{
-		const Image &image = images[i];
-		if (image.data)
+		if (image.data && image.usage != ImageUsage::unknown)
 		{
 			GPUBuffer stagingTexBuffer = createImage(commandBuffer, image);
 			stagingBuffers.push_back(stagingTexBuffer);
@@ -352,13 +365,14 @@ void Application::loadGltf(const std::string &filepath)
 	}
 	tg3_error_stack_free(&errors);
 
-	// load image data into RAM
-	std::filesystem::path imageDir = std::filesystem::path(filepath).parent_path();
-	std::vector<Image> images = loadImages(model, imageDir); // load images into RAM
-
 	// load materials and detect image usage type
 	std::vector<uint32_t> samplerIds = loadSamplers(model); // samplers required for shaders
+	std::vector<Image> images(model.images_count);
 	std::vector<uint32_t> materialIds = loadMaterials(model, samplerIds, images);
+
+	// load image data into RAM
+	std::filesystem::path imageDir = std::filesystem::path(filepath).parent_path();
+	loadImages(model, images, imageDir); // load images into RAM
 
 	// create images and upload to GPU
 	uploadImages(images); // upload images to VRAM
@@ -366,7 +380,10 @@ void Application::loadGltf(const std::string &filepath)
 	// free image memory after uploading to VRAM
 	for (const Image &image : images)
 	{
-		stbi_image_free(image.data);
+		if (image.data)
+		{
+			stbi_image_free(image.data);
+		}
 	}
 	std::vector<uint32_t> meshIds = loadMeshes(model, materialIds); // meshes/submeshes reference materials
 	std::vector<uint32_t> lightIds = loadLights(model);
@@ -601,6 +618,10 @@ void Application::run()
 				{
 					m_flyMode = !m_flyMode;
 				}
+				else if (event.key.scancode == SDL_SCANCODE_F7)
+				{
+					m_camera.type = CameraType::orbit;
+				}
 				else if (event.key.scancode == SDL_SCANCODE_F11)
 				{
 					SDL_SetWindowFullscreen(m_window, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
@@ -630,6 +651,7 @@ void Application::run()
 
 		// handle basic cam movement
 		constexpr float speed = 2.0f;
+		constexpr float orbitSpeed = 0.5f;
 		constexpr float epsilon = 0.001f;
 		constexpr float pitchLimit = glm::half_pi<float>() - epsilon;
 		constexpr float tau = 0.030; // in seconds
@@ -651,21 +673,29 @@ void Application::run()
 		{
 			if (keys[SDL_SCANCODE_W])
 			{
-				m_camera.distance -= speed * deltaTime;
+				m_camera.distance -= orbitSpeed * deltaTime;
 				m_camera.distance = std::max(m_camera.distance, epsilon);
 			}
 			if (keys[SDL_SCANCODE_S])
 			{
-				m_camera.distance += speed * deltaTime;
+				m_camera.distance += orbitSpeed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_LEFT])
+			{
+				m_camera.yaw += orbitSpeed * deltaTime;
+			}
+			if (keys[SDL_SCANCODE_RIGHT])
+			{
+				m_camera.yaw -= orbitSpeed * deltaTime;
 			}
 			if (keys[SDL_SCANCODE_UP])
 			{
-				m_camera.pitch += speed * deltaTime;
+				m_camera.pitch += orbitSpeed * deltaTime;
 				m_camera.pitch = std::clamp(m_camera.pitch, -pitchLimit, pitchLimit);
 			}
 			if (keys[SDL_SCANCODE_DOWN])
 			{
-				m_camera.pitch -= speed * deltaTime;
+				m_camera.pitch -= orbitSpeed * deltaTime;
 				m_camera.pitch = std::clamp(m_camera.pitch, -pitchLimit, pitchLimit);
 			}
 		}
@@ -1742,7 +1772,7 @@ void Application::render()
 	std::vector<Light> gpuLights = m_lights;
 	std::sort(gpuLights.begin(), gpuLights.end(), [](const Light &l1, const Light &l2) {
 		return static_cast<uint32_t>(l1.type) < static_cast<uint32_t>(l2.type);
-	});
+		});
 	mapCopyBufferData(res.lightsBuffer, 0, gpuLights.data(), gpuLights.size() * sizeof(Light));
 
 	// begin dynamic rendering
@@ -1859,7 +1889,10 @@ void Application::render()
 GPUBuffer Application::createImage(VkCommandBuffer commandBuffer, const Image &image)
 {
 	// create vk image and allocation
-	assert(image.usage != ImageUsage::unknown && "Unknown image usage specified");
+	if (image.usage == ImageUsage::unknown)
+	{
+		std::print("*** WARN: Unknown image usage detected\n");
+	}
 	VkFormat imageFormat = image.usage == ImageUsage::srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
 
 	VkImageCreateInfo imageInfo
@@ -1981,9 +2014,11 @@ void Application::updateTextureDescriptors() const
 	imageDescriptors.reserve(m_textures.size());
 	for (const Texture &texture : m_textures)
 	{
+		const GPUImage &gpuImg = m_images[texture.imageId - 1];
+		assert(gpuImg.image != VK_NULL_HANDLE && gpuImg.imageView != VK_NULL_HANDLE && "Invalid GPU Image Handles");
 		imageDescriptors.push_back({
 			.sampler = m_samplers[texture.samplerId - 1],
-			.imageView = m_images[texture.imageId - 1].imageView,
+			.imageView = gpuImg.imageView,
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
 	}
 	VkWriteDescriptorSet descSetWrite{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -1998,15 +2033,13 @@ void Application::updateTextureDescriptors() const
 
 std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const std::vector<uint32_t> &samplerIds, std::vector<Image> &images)
 {
-	assert(m_textures.size() + model.textures_count <= MaxTextures && "Exceeding max texture count");
-
 	std::vector<uint32_t> materialIds(model.materials_count);
 
 	for (int i = 0; i < model.materials_count; ++i)
 	{
 		const tg3_material *tg3mat = &model.materials[i];
-
 		Material mat;
+
 		// basic fields
 		mat.baseColor = glm::vec4(
 			tg3mat->pbr_metallic_roughness.base_color_factor[0],
@@ -2014,14 +2047,25 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 			tg3mat->pbr_metallic_roughness.base_color_factor[2],
 			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
 		mat.roughnessFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.roughness_factor);
+		mat.metallicFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.metallic_factor);
+		mat.emissiveFactor = glm::vec3(
+			tg3mat->emissive_factor[0],
+			tg3mat->emissive_factor[1],
+			tg3mat->emissive_factor[2]);
 
 		const auto processTexture = [this, &images, &samplerIds](const tg3_texture &tex, ImageUsage imageUsage) {
+			assert(m_textures.size() < MaxTextures && "Exceeding max texture count");
 			// set appropriate image usage and pre-create GPUImage ID
 			Image &img = images[tex.source];
-			assert((img.usage == ImageUsage::unknown || img.usage == imageUsage) && "Dual image usage is unsupported");
 			img.usage = imageUsage;
-			m_images.push_back(GPUImage{});
-			img.gpuImageId = m_images.size();
+			if (!img.gpuImageId)
+			{
+				img.gpuImageId = nextGPUImage();
+			}
+			else if (img.usage != imageUsage)
+			{
+				std::print("*** WARN: Multi image usage is unsupported\n");
+			}
 
 			// create texture GPUImage/Sampler combo
 			m_textures.push_back(Texture{
@@ -2031,7 +2075,7 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 				});
 			uint32_t textureIndex = m_textures.size() - 1;
 			return textureIndex;
-		};
+			};
 
 		// texture maps and image usage detection
 		if (tg3mat->pbr_metallic_roughness.base_color_texture.index != -1)
@@ -2047,7 +2091,12 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 		if (tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index != -1)
 		{
 			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index];
-			mat.roughnessTextureIndex = processTexture(tex, ImageUsage::data);
+			mat.ormTextureIndex = processTexture(tex, ImageUsage::data);
+		}
+		if (tg3mat->emissive_texture.index != -1)
+		{
+			const tg3_texture &tex = model.textures[tg3mat->emissive_texture.index];
+			mat.emissiveTextureIndex = processTexture(tex, ImageUsage::srgb);
 		}
 
 		m_materials.push_back(mat);
@@ -2219,7 +2268,7 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 					}
 					else if (strcmp(pair.key.data, "intensity") == 0)
 					{
-						light.intensity = pair.value.real_val;
+						light.intensity = pair.value.type == TG3_VALUE_REAL ? pair.value.real_val : pair.value.int_val;
 					}
 					else if (strcmp(pair.key.data, "spot") == 0)
 					{
