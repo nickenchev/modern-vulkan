@@ -100,16 +100,16 @@ bool Application::loadData()
 	//loadGltf("D:/glTF-Sample-Models/2.0/Sponza/glTF/Sponza.gltf");
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
-	//loadGltf("D:/gltf Models/mario_kart_8_deluxe_-_los_angeles_laps_tour/scene.gltf");
+	//loadGltf("D:/gltf Models/mario-kart/mariokart.gltf");
 	//loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
-	//loadGltf("assets/modular-demo/specular_demo.gltf"); // Check your CWD
+	loadGltf("assets/modular-demo/specular_demo.gltf"); // Check your CWD
 	//loadGltf("assets/modular-demo/helmet.gltf"); // Check your CWD
-	//loadGltf("D:\\gltf Models\\bistro_interior\\bistro_interior.gltf");
-	loadGltf("D:\\gltf Models\\bistro_exterior\\Untitled.gltf");
+	//loadGltf("assets/modular-demo/bistro-interior.gltf"); // Check your CWD
+	//loadGltf("D:\\gltf Models\\bistro_exterior\\Untitled.gltf");
 
 	// scale root node
-	//Node &root = m_nodeWorld.getNode(m_rootNodeId);
-	//root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
+	Node &root = m_nodeWorld.getNode(m_rootNodeId);
+	root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
 
 	// Optional: Create a camera node if it doesn't exist
 	if (!m_cameraNodeId)
@@ -1388,7 +1388,8 @@ VkPipeline Application::createGraphicsPipeline()
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
 		.polygonMode = VK_POLYGON_MODE_FILL,
-		.cullMode = VK_CULL_MODE_BACK_BIT,
+		//.cullMode = VK_CULL_MODE_BACK_BIT,
+		.cullMode = VK_CULL_MODE_NONE,
 		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.lineWidth = 1.0f,
 	};
@@ -1772,7 +1773,7 @@ void Application::render()
 	std::vector<Light> gpuLights = m_lights;
 	std::sort(gpuLights.begin(), gpuLights.end(), [](const Light &l1, const Light &l2) {
 		return static_cast<uint32_t>(l1.type) < static_cast<uint32_t>(l2.type);
-		});
+	});
 	mapCopyBufferData(res.lightsBuffer, 0, gpuLights.data(), gpuLights.size() * sizeof(Light));
 
 	// begin dynamic rendering
@@ -2046,12 +2047,7 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 			tg3mat->pbr_metallic_roughness.base_color_factor[1],
 			tg3mat->pbr_metallic_roughness.base_color_factor[2],
 			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
-		mat.roughnessFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.roughness_factor);
-		mat.metallicFactor = static_cast<float>(tg3mat->pbr_metallic_roughness.metallic_factor);
-		mat.emissiveFactor = glm::vec3(
-			tg3mat->emissive_factor[0],
-			tg3mat->emissive_factor[1],
-			tg3mat->emissive_factor[2]);
+		mat.roughness = tg3mat->pbr_metallic_roughness.roughness_factor;
 
 		const auto processTexture = [this, &images, &samplerIds](const tg3_texture &tex, ImageUsage imageUsage) {
 			assert(m_textures.size() < MaxTextures && "Exceeding max texture count");
@@ -2083,21 +2079,31 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.base_color_texture.index];
 			mat.baseColorTextureIndex = processTexture(tex, ImageUsage::srgb);
 		}
-		if (tg3mat->normal_texture.index != -1)
-		{
-			const tg3_texture &tex = model.textures[tg3mat->normal_texture.index];
-			mat.normalTextureIndex = processTexture(tex, ImageUsage::data);
-		}
-		if (tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index != -1)
-		{
-			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index];
-			mat.ormTextureIndex = processTexture(tex, ImageUsage::data);
-		}
-		if (tg3mat->emissive_texture.index != -1)
-		{
-			const tg3_texture &tex = model.textures[tg3mat->emissive_texture.index];
-			mat.emissiveTextureIndex = processTexture(tex, ImageUsage::srgb);
-		}
+
+		//// check for specular extension
+		//for (int e = 0; e < tg3mat->ext.extensions_count; ++e)
+		//{
+		//	const tg3_extension &ext = tg3mat->ext.extensions[e];
+		//	if (strcmp(ext.name.data, "KHR_materials_specular") == 0)
+		//	{
+		//		for (int o = 0; o < ext.value.object_count; ++o)
+		//		{
+		//			const tg3_kv_pair &obj = ext.value.object_data[o];
+		//			if (strcmp(obj.key.data, "specularColorFactor") == 0)
+		//			{
+		//				mat.specularColorFactor = glm::vec3(
+		//					obj.value.array_data[0].real_val,
+		//					obj.value.array_data[1].real_val,
+		//					obj.value.array_data[2].real_val);
+		//			}
+		//			else if (strcmp(obj.key.data, "specularColorTexture") == 0)
+		//			{
+		//				const tg3_texture &tex = model.textures[obj.value.int_val];
+		//				mat.specularTextureIndex = processTexture(tex, ImageUsage::data);
+		//			}
+		//		}
+		//	}
+		//}
 
 		m_materials.push_back(mat);
 		materialIds[i] = m_materials.size();
@@ -2167,10 +2173,6 @@ std::vector<uint32_t> Application::loadMeshes(const tg3_model &model, const std:
 				}
 				else if (strcmp(attr->key.data, "COLOR_0") == 0)
 				{
-					const tg3_accessor *accessor = &model.accessors[attr->value];
-					assert(accessor->type == TG3_TYPE_VEC3 || accessor->type == TG3_TYPE_VEC4);
-					assert(accessor->component_type == TG3_COMPONENT_TYPE_FLOAT);
-					writeAttribute(&Vertex::color, attr);
 				}
 				else if (strcmp(attr->key.data, "TEXCOORD_0") == 0)
 				{

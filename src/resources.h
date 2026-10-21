@@ -67,13 +67,8 @@ struct Camera
 struct Material
 {
 	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
-	float roughnessFactor = 1;
-	float metallicFactor = 1;
-	glm::vec3 emissiveFactor = glm::vec3(1, 1, 1);
+	float roughness;
 	uint32_t baseColorTextureIndex = 0;
-	uint32_t normalTextureIndex = 0;
-	uint32_t ormTextureIndex = 0;
-	uint32_t emissiveTextureIndex = 0;
 };
 
 struct Texture
