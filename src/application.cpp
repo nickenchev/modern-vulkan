@@ -32,7 +32,7 @@ bool Application::initialize()
 
 	// setup renderer specifits here
 	m_nodeWorld.initialize(4096); // maximum node-world size
-	m_nodeRenderStack.reserve(128); // render-stack per-frame size
+	m_nodeRenderStack.reserve(256); // render-stack per-frame size
 
 	if (!initializeVulkan())
 	{
@@ -106,10 +106,6 @@ bool Application::loadData()
 	//loadGltf("assets/modular-demo/helmet.gltf"); // Check your CWD
 	//loadGltf("assets/modular-demo/bistro-interior.gltf"); // Check your CWD
 	//loadGltf("D:\\gltf Models\\bistro_exterior\\Untitled.gltf");
-
-	// scale root node
-	Node &root = m_nodeWorld.getNode(m_rootNodeId);
-	root.setScale(glm::vec3(0.01f, 0.01f, 0.01f));
 
 	// Optional: Create a camera node if it doesn't exist
 	if (!m_cameraNodeId)
@@ -2048,6 +2044,7 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 			tg3mat->pbr_metallic_roughness.base_color_factor[2],
 			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
 		mat.roughness = tg3mat->pbr_metallic_roughness.roughness_factor;
+		mat.metallic = tg3mat->pbr_metallic_roughness.metallic_factor;
 
 		const auto processTexture = [this, &images, &samplerIds](const tg3_texture &tex, ImageUsage imageUsage) {
 			assert(m_textures.size() < MaxTextures && "Exceeding max texture count");
@@ -2078,6 +2075,11 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 		{
 			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.base_color_texture.index];
 			mat.baseColorTextureIndex = processTexture(tex, ImageUsage::srgb);
+		}
+		if (tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index != -1)
+		{
+			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index];
+			mat.metallicRoughnessTextureIndex = processTexture(tex, ImageUsage::data);
 		}
 
 		//// check for specular extension
