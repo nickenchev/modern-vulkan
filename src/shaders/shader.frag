@@ -79,12 +79,16 @@ float attenuate(float lightDistance, float range)
 	return attenuation;
 }
 
-float specular(ShadeInfo shadeInfo)
+vec3 specular(ShadeInfo shadeInfo)
 {
 	vec3 halfwayDir = normalize(shadeInfo.lightDir + shadeInfo.viewDir);
-	float m = 128.0 * shadeInfo.shinyness;
+	float m = 256.0 * shadeInfo.shinyness;
 	float spec = (m + 8.0) * pow(max(dot(shadeInfo.normal, halfwayDir), 0.0), m) / 8.0;
-	return spec;
+
+	vec3 r0 = mix(vec3(0.04), shadeInfo.surfaceColor, shadeInfo.metallic);
+	float vdoth = max(dot(shadeInfo.viewDir, halfwayDir), 0.0);
+	vec3 fresnel = r0 + (1.0 - r0) * pow(1.0 - vdoth, 5.0);
+	return spec * fresnel * shadeInfo.shinyness;
 }
 
 void lightFragment(Light light, inout vec3 litFragment, ShadeInfo shadeInfo, Material material, float attenuation)
@@ -93,8 +97,7 @@ void lightFragment(Light light, inout vec3 litFragment, ShadeInfo shadeInfo, Mat
 	float intensity = light.intensity / 683.0;
 	vec3 radiance = light.color * attenuation * intensity;
 	litFragment += shadeInfo.surfaceColor * radiance * d * (1.0 - shadeInfo.metallic);
-	vec3 specularTint = mix(vec3(1.0), shadeInfo.surfaceColor, shadeInfo.metallic);
-	litFragment += specularTint * specular(shadeInfo) * d * radiance;
+	litFragment += specular(shadeInfo) * d * radiance;
 }
 
 void main()
@@ -162,7 +165,7 @@ void main()
 	litColor += vec3(0.02, 0.02, 0.02) * shadeInfo.surfaceColor * (1.0 - shadeInfo.metallic);
 
 	// exposure and tonemapping
-	float exposure = 0.8;
+	float exposure = 0.2;
 	vec3 c = litColor * exposure;
 	vec3 tonemapped = (c * (2.51 * c + 0.03)) / (c * (2.43*c + 0.59) + 0.14);
 

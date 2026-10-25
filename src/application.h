@@ -170,7 +170,6 @@ class Application
 
 	// lights
 	std::vector<Light> m_lights;
-	std::vector<Light> m_gpuLights;
 	std::vector<uint32_t> m_lightIndices;
 	uint32_t m_numDirLights = 0;
 	uint32_t m_numPointLights = 0;
