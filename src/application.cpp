@@ -101,8 +101,8 @@ bool Application::loadData()
 	//loadGltf("D:/gltf Models/barn/scene.gltf");
 	//loadGltf("S:/projects/boiler-3d/data/littlest_tokyo/glTF/littlest_tokyo.gltf");
 	//loadGltf("D:/gltf Models/mario-kart/mariokart.gltf");
-	//loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
-	loadGltf("assets/modular-demo/specular_demo.gltf"); // Check your CWD
+	loadGltf("assets/modular-demo/modular-demo.gltf"); // Check your CWD
+	//loadGltf("assets/modular-demo/specular_demo.gltf"); // Check your CWD
 	//loadGltf("assets/modular-demo/helmet.gltf"); // Check your CWD
 	//loadGltf("assets/modular-demo/bistro-interior.gltf"); // Check your CWD
 	//loadGltf("D:\\gltf Models\\bistro_exterior\\Untitled.gltf");
@@ -413,6 +413,17 @@ void Application::onNodeImported(const Node &node, uint32_t nodeId)
 	{
 		m_flashlightId = nodeId;
 	}
+	else if (node.getName() == "RedLight")
+	{
+		m_redLightId = nodeId;
+	}
+	else if (node.getName() == "BlueLight")
+	{
+		m_blueLightId = nodeId;
+		Node &node = m_nodeWorld.getNode(nodeId);
+		Light &light = m_lights[node.lightId - 1];
+		light.range = 5.0f;
+	}
 }
 
 uint32_t Application::importNode(NodeWorld &nodeWorld, const tg3_model &model, int32_t nodeIndex, uint32_t parentId, uint32_t prevSiblingId, std::vector<uint32_t> &meshIds, std::vector<uint32_t> &lightIds)
@@ -587,6 +598,7 @@ void Application::run()
 	{
 		uint64_t nowTime = SDL_GetTicks();
 		const float deltaTime = (nowTime - prevTime) / 1000.0f;
+		m_globalTime += deltaTime;
 		prevTime = nowTime;
 		glm::vec2 mouseRel{};
 
@@ -613,6 +625,31 @@ void Application::run()
 				if (event.key.scancode == SDL_SCANCODE_GRAVE)
 				{
 					m_flyMode = !m_flyMode;
+				}
+				else if (event.key.scancode == SDL_SCANCODE_F2)
+				{
+					std::print("* WARN: Reloading Shaders and Pipelines\n");
+					VkShaderModule oldVertShader = m_vertShader;
+					VkShaderModule oldFragShader = m_fragShader;
+					if (createShaders())
+					{
+						vkDeviceWaitIdle(m_device);
+						// pipeline cleanup
+						vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
+						vkDestroyPipeline(m_device, m_pipeline, nullptr);
+
+						// cleanup shaders
+						vkDestroyShaderModule(m_device, oldVertShader, nullptr);
+						vkDestroyShaderModule(m_device, oldFragShader, nullptr);
+						if (m_pipeline = createGraphicsPipeline(); !m_pipeline)
+						{
+							showError("Unable to initialize the graphics pipeline");
+						}
+					}
+					else
+					{
+						showError("Error creating shader modules");
+					}
 				}
 				else if (event.key.scancode == SDL_SCANCODE_F7)
 				{
@@ -733,6 +770,7 @@ void Application::run()
 			camNode.setTranslation(translation);
 		}
 
+		update();
 		updateViewMatrix();
 		render();
 	}
@@ -2443,6 +2481,45 @@ void Application::updateViewMatrix()
 		m_matView = glm::mat4_cast(glm::conjugate(cameraQuat)) * glm::translate(glm::mat4(1.0f), -camPosition);
 	}
 	m_viewProjMatrix = m_matProj * m_matView;
+}
+
+void Application::update()
+{
+	if (m_redLightId)
+	{
+		Node &redLight = m_nodeWorld.getNode(m_redLightId);
+		Light &light = m_lights[redLight.lightId - 1];
+
+		float waveA = sinf(m_globalTime * 0.95f);
+		float waveC = sinf(m_globalTime * 4.21f);
+
+		float modulatedTime = (m_globalTime * 45.13f) + (waveC * 15.0f);
+		float waveB = sinf(modulatedTime);
+
+		if (waveA < -0.80f)
+		{
+			light.intensityFactor = 0.0f;
+		}
+		else if (waveA < -0.25)
+		{
+			light.intensityFactor = (waveB > 0.1f) ? 0.5f : 0.1f;
+		}
+		else
+		{
+			light.intensityFactor = 1.0f;
+		}
+	}
+	if (m_blueLightId)
+	{
+		Node &blueLight = m_nodeWorld.getNode(m_blueLightId);
+		Light &light = m_lights[blueLight.lightId - 1];
+
+		float monitorSlowRoll = sinf(m_globalTime * 1.75f);  // Cycles gently every ~3.5 seconds
+		float phosphorMicroHum = sinf(m_globalTime * 47.11f); // Tiny high-frequency voltage chatter
+		float wave = (monitorSlowRoll * 0.08f) + (phosphorMicroHum * 0.04f);
+
+		light.intensityFactor = 0.92f + wave;
+	}
 }
 
 GPUBuffer Application::createBuffer(VkBufferUsageFlags usage, size_t byteSize, bool mappable, VmaMemoryUsage memoryUsage)

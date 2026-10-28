@@ -86,6 +86,7 @@ class Application
 	bool m_running = false;
     uint64_t m_frameIndex = 0;
     uint64_t m_nextSignalValue = MaxFramesInFlight + 1;
+	double m_globalTime = 0;
 
 	// vulkan core
 	VkInstance m_vulkanInstance = nullptr;
@@ -177,6 +178,8 @@ class Application
 
 	// gameplay related
 	uint32_t m_flashlightId = 0;
+	uint32_t m_redLightId = 0;
+	uint32_t m_blueLightId = 0;
 
 	void showError(const std::string &errorMessasge) const;
 	bool initializeVulkan();
@@ -198,6 +201,7 @@ class Application
 	bool createResourceBuffers();
 	void updateProjectionMatrix();
 	void updateViewMatrix();
+	void update();
 	void render();
 
 	VkCommandBuffer startTransientCommandBuffer();

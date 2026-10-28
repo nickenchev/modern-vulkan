@@ -89,7 +89,8 @@ struct Light
 	glm::vec3 color = glm::vec3(1.0f);
 	glm::vec3 direction = glm::vec3(0, 0, -1);
 	float intensity = 1.0f;
-	float range = 10.0f;
+	float intensityFactor = 1.0f;
+	float range = 20.0f;
 	float innerConeAngle = 0;
 	float outerConeAngle = glm::quarter_pi<float>();
 };
