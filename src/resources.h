@@ -68,7 +68,6 @@ struct Material
 {
 	glm::vec4 baseColor = glm::vec4(1, 1, 1, 1);
 	float roughness;
-	float metallic;
 	uint32_t baseColorTextureIndex = 0;
 	uint32_t metallicRoughnessTextureIndex = 0;
 };
@@ -90,7 +89,7 @@ struct Light
 	glm::vec3 direction = glm::vec3(0, 0, -1);
 	float intensity = 1.0f;
 	float intensityFactor = 1.0f;
-	float range = 20.0f;
+	float range = 30.0f;
 	float innerConeAngle = 0;
 	float outerConeAngle = glm::quarter_pi<float>();
 };

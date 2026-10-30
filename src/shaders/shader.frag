@@ -59,6 +59,7 @@ struct ShadeInfo
 	vec3 surfaceColor;
 	vec4 texColor;
 	float shinyness;
+	float specularStrength;
 	vec3 normal;
 	vec3 viewDir;
 	vec3 lightDir;
@@ -81,8 +82,7 @@ float specular(ShadeInfo shadeInfo)
 {
 	vec3 halfwayDir = normalize(shadeInfo.lightDir + shadeInfo.viewDir);
 	float m = mix(2.0, 128.0, shadeInfo.shinyness);
-	float energyNorm = (m + 8.0) / 8.0;
-	float spec = pow(max(dot(shadeInfo.normal, halfwayDir), 0.001), m) * energyNorm;
+	float spec = pow(max(dot(shadeInfo.normal, halfwayDir), 0), m);
 	return spec;
 }
 
@@ -91,9 +91,29 @@ void lightFragment(Light light, inout vec3 litFragment, ShadeInfo shadeInfo, Mat
 	float d = max(dot(shadeInfo.normal, shadeInfo.lightDir), 0);
 	float intensity = light.intensity * light.intensityFactor / 683.0; // convert from physical units
 	vec3 radiance = light.color * attenuation * intensity;
+	float specularFactor = specular(shadeInfo);
 	vec3 diffuse = shadeInfo.surfaceColor * radiance * d;
-	vec3 specularColor = specular(shadeInfo) * d * radiance;
+	vec3 specularColor = specularFactor * radiance * shadeInfo.specularStrength;
 	litFragment += diffuse + specularColor;
+}
+
+vec3 PBRNeutralToneMapping( vec3 color ) {
+  const float startCompression = 0.8 - 0.04;
+  const float desaturation = 0.15;
+
+  float x = min(color.r, min(color.g, color.b));
+  float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+  color -= offset;
+
+  float peak = max(color.r, max(color.g, color.b));
+  if (peak < startCompression) return color;
+
+  const float d = 1. - startCompression;
+  float newPeak = 1. - d * d / (peak + d - startCompression);
+  color *= newPeak / peak;
+
+  float g = 1. - 1. / (desaturation * (peak - newPeak) + 1.);
+  return mix(color, newPeak * vec3(1, 1, 1), g);
 }
 
 void main()
@@ -107,7 +127,9 @@ void main()
 	shadeInfo.normal = normalize(inNormal);
 	shadeInfo.viewDir = normalize(frameConsts.camPosition - inFragW);
 	vec3 ormColor = texture(textures[material.metallicRoughnessTextureIndex], inUV).rgb;
-	shadeInfo.shinyness = 1.0 - (material.roughness * ormColor.g);
+	float roughness = material.roughness * ormColor.g;
+	shadeInfo.shinyness = 1.0 - roughness;
+	shadeInfo.specularStrength = 2.0 * pow(shadeInfo.shinyness, 2.0);
 
 	vec3 litColor = vec3(0);
     LightsPtr lightsBuff = LightsPtr(frameConsts.lightsBufferAddress);
@@ -159,9 +181,11 @@ void main()
 	litColor += vec3(0.01) * shadeInfo.surfaceColor;
 
 	// exposure and tonemapping
-	float exposure = 0.5;
+	float exposure = 0.4;
 	vec3 c = litColor * exposure;
-	vec3 tonemapped = c / (c + 1.0);
+	//vec3 tonemapped = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+	//vec3 tonemapped = c / (1.0 + c);
+	vec3 tonemapped = PBRNeutralToneMapping(c);
 
 	fragColor = vec4(tonemapped, shadeInfo.texColor.a);
 }

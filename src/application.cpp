@@ -2082,7 +2082,6 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 			tg3mat->pbr_metallic_roughness.base_color_factor[2],
 			tg3mat->pbr_metallic_roughness.base_color_factor[3]);
 		mat.roughness = tg3mat->pbr_metallic_roughness.roughness_factor;
-		mat.metallic = tg3mat->pbr_metallic_roughness.metallic_factor;
 
 		const auto processTexture = [this, &images, &samplerIds](const tg3_texture &tex, ImageUsage imageUsage) {
 			assert(m_textures.size() < MaxTextures && "Exceeding max texture count");
@@ -2493,7 +2492,7 @@ void Application::update()
 		float waveA = sinf(m_globalTime * 0.95f);
 		float waveC = sinf(m_globalTime * 4.21f);
 
-		float modulatedTime = (m_globalTime * 45.13f) + (waveC * 15.0f);
+		float modulatedTime = (m_globalTime * 15.13f) + (waveC * 15.0f);
 		float waveB = sinf(modulatedTime);
 
 		if (waveA < -0.80f)
