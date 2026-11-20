@@ -1796,7 +1796,6 @@ void Application::render()
 
 	const Node &camNode = m_nodeWorld.getNode(m_cameraNodeId);
 	frameConsts.camPosition = camNode.getTranslation();
-	frameConsts.camDirection = m_camera.forward;
 
 	vkCmdPushConstants(res.commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FrameConstants), &frameConsts);
 
@@ -1804,11 +1803,11 @@ void Application::render()
 	vkCmdBindIndexBuffer(res.commandBuffer, idxBuffer.vkBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 	// update light buffer
-	std::vector<Light> gpuLights = m_lights;
-	std::sort(gpuLights.begin(), gpuLights.end(), [](const Light &l1, const Light &l2) {
+	std::copy(m_lights.begin(), m_lights.end(), m_lightsSorted.begin());
+	std::sort(m_lightsSorted.begin(), m_lightsSorted.end(), [](const Light &l1, const Light &l2) {
 		return static_cast<uint32_t>(l1.type) < static_cast<uint32_t>(l2.type);
 	});
-	mapCopyBufferData(res.lightsBuffer, 0, gpuLights.data(), gpuLights.size() * sizeof(Light));
+	mapCopyBufferData(res.lightsBuffer, 0, m_lightsSorted.data(), m_lightsSorted.size() * sizeof(Light));
 
 	// begin dynamic rendering
 	vkCmdBeginRendering(res.commandBuffer, &renderingInfo);
@@ -2098,12 +2097,12 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 			}
 
 			// create texture GPUImage/Sampler combo
+			uint32_t textureIndex = m_textures.size();
 			m_textures.push_back(Texture{
 					.name = tex.name.data != nullptr ? tex.name.data : "",
 					.imageId = img.gpuImageId,
 					.samplerId = samplerIds[tex.sampler]
 				});
-			uint32_t textureIndex = m_textures.size() - 1;
 			return textureIndex;
 			};
 
@@ -2116,7 +2115,7 @@ std::vector<uint32_t> Application::loadMaterials(const tg3_model &model, const s
 		if (tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index != -1)
 		{
 			const tg3_texture &tex = model.textures[tg3mat->pbr_metallic_roughness.metallic_roughness_texture.index];
-			mat.metallicRoughnessTextureIndex = processTexture(tex, ImageUsage::data);
+			mat.metallicRoughnessTextureIndex = processTexture(tex, ImageUsage::nonColor);
 		}
 
 		//// check for specular extension
@@ -2265,10 +2264,13 @@ std::vector<uint32_t> Application::loadLights(const tg3_model &model)
 		const tg3_extension &ext = model.ext.extensions[i];
 		if (strcmp(ext.name.data, "KHR_lights_punctual") == 0)
 		{
-			const tg3_value &lightsObj = ext.value;
-			const tg3_value &lightsArray = lightsObj.object_data->value;
-			const int lightCount = lightsObj.object_data->value.array_count;
+			const tg3_value &extVal = ext.value;
+			const tg3_value &lightsArray = extVal.object_data[0].value;
+			const int lightCount = lightsArray.array_count;
 			lightIds.reserve(lightCount);
+			m_lights.reserve(m_lights.size() + lightCount); // able to load multiple gltf files
+			m_lightsSorted.resize(m_lights.size() + lightCount);
+
 			for (int li = 0; li < lightCount; ++li)
 			{
 				const tg3_value &tg3Light = lightsArray.array_data[li];

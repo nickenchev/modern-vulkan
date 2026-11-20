@@ -31,7 +31,6 @@ struct FrameConstants
 	uint64_t renderItemsAddress = 0;
 	uint64_t lightsBufferAddress = 0;
 	glm::vec3 camPosition;
-	glm::vec3 camDirection;
 	uint32_t numDirLights = 0;
 	uint32_t numPointLights = 0;
 	uint32_t numSpotLights = 0;
@@ -171,7 +170,7 @@ class Application
 
 	// lights
 	std::vector<Light> m_lights;
-	std::vector<uint32_t> m_lightIndices;
+	std::vector<Light> m_lightsSorted;
 	uint32_t m_numDirLights = 0;
 	uint32_t m_numPointLights = 0;
 	uint32_t m_numSpotLights = 0;

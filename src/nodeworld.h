@@ -71,6 +71,7 @@ public:
 		m_transform = transform;
 		m_dirty = false;
 	}
+	bool isDirty() const { return m_dirty; }
 };
 
 class NodeWorld

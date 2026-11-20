@@ -19,7 +19,6 @@ layout(push_constant, scalar) uniform FrameConstants
     uint64_t renderItemBufferAddress;
     uint64_t lightsBufferAddress;
     vec3 camPosition;
-    vec3 camDirection;
 	uint numDirLights;
 	uint numPointLights;
 	uint numSpotLights;
@@ -54,6 +53,11 @@ struct Light
 	float outerConeAngle;
 };
 
+layout(buffer_reference, scalar) readonly buffer LightsPtr
+{
+    Light lights[];
+};
+
 struct ShadeInfo
 {
 	vec3 surfaceColor;
@@ -65,15 +69,11 @@ struct ShadeInfo
 	vec3 lightDir;
 };
 
-layout(buffer_reference, scalar) readonly buffer LightsPtr
-{
-    Light lights[];
-};
 
 float attenuate(float lightDistance, float range)
 {
-	float inverseSquare = 1.0 / max(pow(lightDistance, 2), 0.001);
-	float window = pow(clamp(1.0 - pow(lightDistance / range, 4), 0, 1), 2);
+	float inverseSquare = 1.0 / max(pow(lightDistance, 2), 0.0001);
+	float window = pow(1.0 - pow(clamp(lightDistance / range, 0.0, 1.0), 4), 2);
 	float attenuation = inverseSquare * window;
 	return attenuation;
 }
@@ -81,18 +81,19 @@ float attenuate(float lightDistance, float range)
 float specular(ShadeInfo shadeInfo)
 {
 	vec3 halfwayDir = normalize(shadeInfo.lightDir + shadeInfo.viewDir);
+	float NdotH = max(dot(shadeInfo.normal, halfwayDir), 0);
 	float m = mix(2.0, 128.0, shadeInfo.shinyness);
-	float spec = pow(max(dot(shadeInfo.normal, halfwayDir), 0), m);
+	float spec = pow(NdotH, m);
 	return spec;
 }
 
-void lightFragment(Light light, inout vec3 litFragment, ShadeInfo shadeInfo, Material material, float attenuation)
+void lightFragment(Light light, inout vec3 litFragment, ShadeInfo shadeInfo, float attenuation)
 {
 	float d = max(dot(shadeInfo.normal, shadeInfo.lightDir), 0);
 	float intensity = light.intensity * light.intensityFactor / 683.0; // convert from physical units
 	vec3 radiance = light.color * attenuation * intensity;
-	float specularFactor = specular(shadeInfo);
 	vec3 diffuse = shadeInfo.surfaceColor * radiance * d;
+	float specularFactor = specular(shadeInfo);
 	vec3 specularColor = specularFactor * radiance * shadeInfo.specularStrength;
 	litFragment += diffuse + specularColor;
 }
@@ -129,7 +130,7 @@ void main()
 	vec3 ormColor = texture(textures[material.metallicRoughnessTextureIndex], inUV).rgb;
 	float roughness = material.roughness * ormColor.g;
 	shadeInfo.shinyness = 1.0 - roughness;
-	shadeInfo.specularStrength = 2.0 * pow(shadeInfo.shinyness, 2.0);
+	shadeInfo.specularStrength = pow(shadeInfo.shinyness, 2.0) * 2.0;
 
 	vec3 litColor = vec3(0);
     LightsPtr lightsBuff = LightsPtr(frameConsts.lightsBufferAddress);
@@ -140,8 +141,7 @@ void main()
 	{
 		Light light = lightsBuff.lights[lightIdx + i];
 		shadeInfo.lightDir = -light.direction;
-		float directionalAtten = 1.0;
-		lightFragment(light, litColor, shadeInfo, material, directionalAtten);
+		lightFragment(light, litColor, shadeInfo, 1.0);
 	}
 	lightIdx += frameConsts.numDirLights;
 
@@ -154,7 +154,7 @@ void main()
 		L = L / lightDistance;
 		shadeInfo.lightDir = L;
 		float attenuation = attenuate(lightDistance, light.range);
-		lightFragment(light, litColor, shadeInfo, material, attenuation);
+		lightFragment(light, litColor, shadeInfo, attenuation);
 	}
 	lightIdx += frameConsts.numPointLights;
 
@@ -172,8 +172,8 @@ void main()
 		float cosU = cos(light.outerConeAngle);
 		float cosP = cos(light.innerConeAngle);
 		float t = clamp((cosS - cosU) / (cosP - cosU), 0, 1);
-		float cone = t * t * (3 - 2 * t);
-		lightFragment(light, litColor, shadeInfo, material, attenuation * cone);
+		float cone = smoothstep(0.0, 1.0, t);
+		lightFragment(light, litColor, shadeInfo, attenuation * cone);
 	}
 	lightIdx += frameConsts.numSpotLights;
 
@@ -183,8 +183,8 @@ void main()
 	// exposure and tonemapping
 	float exposure = 0.4;
 	vec3 c = litColor * exposure;
-	//vec3 tonemapped = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
 	//vec3 tonemapped = c / (1.0 + c);
+	//vec3 tonemapped = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
 	vec3 tonemapped = PBRNeutralToneMapping(c);
 
 	fragColor = vec4(tonemapped, shadeInfo.texColor.a);

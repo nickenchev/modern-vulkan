@@ -11,7 +11,9 @@ layout(push_constant, scalar) uniform FrameConstants
     uint64_t renderItemBufferAddress;
     uint64_t lightsBufferAddress;
     vec3 camPosition;
-    vec3 camDirection;
+	uint numDirLights;
+	uint numPointLights;
+	uint numSpotLights;
 } frameConsts;
 
 struct Vertex

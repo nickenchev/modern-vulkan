@@ -30,7 +30,7 @@ struct SubMesh
 
 enum class ImageUsage
 {
-	unknown, srgb, data
+	unknown, srgb, nonColor
 };
 
 struct Image
